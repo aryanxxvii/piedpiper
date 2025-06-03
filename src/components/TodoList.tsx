@@ -19,6 +19,8 @@ const TodoList: React.FC = () => {
   const [editText, setEditText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const todoListRef = useRef<HTMLDivElement>(null);
+  const selectedItemRef = useRef<HTMLDivElement>(null);
 
   // Load todos from localStorage on component mount
   useEffect(() => {
@@ -114,6 +116,37 @@ const TodoList: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [todos, selectedIndex, showAddInput, editingId]);
 
+  // Auto-scroll to keep selected item in view with extra padding
+  useEffect(() => {
+    if (selectedItemRef.current && todoListRef.current) {
+      const container = todoListRef.current;
+      const selectedItem = selectedItemRef.current;
+      
+      // Calculate if the element is outside the visible area
+      const containerRect = container.getBoundingClientRect();
+      const selectedRect = selectedItem.getBoundingClientRect();
+      
+      // Add padding to ensure borders are fully visible
+      const paddingBottom = 15; // Extra padding to show bottom border
+      const paddingTop = 15;    // Extra padding to show top border
+      
+      // Check if the selected item is outside the visible area
+      if (selectedRect.bottom + paddingBottom > containerRect.bottom) {
+        // If below visible area, scroll down with extra space
+        container.scrollBy({
+          top: selectedRect.bottom - containerRect.bottom + paddingBottom,
+          behavior: 'smooth'
+        });
+      } else if (selectedRect.top - paddingTop < containerRect.top) {
+        // If above visible area, scroll up with extra space
+        container.scrollBy({
+          top: selectedRect.top - containerRect.top - paddingTop,
+          behavior: 'smooth'
+        });
+      }
+    }
+  }, [selectedIndex]);
+
   const togglePlayback = async () => {
     if (audioEngine.getIsPlaying()) {
       audioEngine.stop();
@@ -188,14 +221,15 @@ const TodoList: React.FC = () => {
   };
 
   return (
-    <div className="w-full max-w-md mx-auto bg-mantle rounded-lg p-6">
-
-      {/* Todo list */}
-      <div className="space-y-2 mb-4">
+    <div className="w-full max-w-md p-8 bg-mantle rounded-lg shadow-md">
+      
+      {/* Todo list - scrollable container */}
+      <div ref={todoListRef} className="space-y-2 mb-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
         {todos.map((todo, index) => (
           <div 
-            key={todo.id} 
-            className={`flex items-center gap-3 p-2 rounded-md  ${
+            key={todo.id}
+            ref={index === selectedIndex ? selectedItemRef : undefined}
+            className={`flex items-center gap-3 mt-2 ml-3 p-2 rounded-md  ${
               index === selectedIndex ? 'ring-2 ring-mauve ring-opacity-50 hover:bg-base' : 'hover:bg-base'
             }`}
           >
@@ -222,11 +256,12 @@ const TodoList: React.FC = () => {
               />
             ) : (
               <span 
-                className={`flex-1 text-sm ${
+                className={`flex-1 text-sm overflow-hidden text-ellipsis whitespace-nowrap ${
                   todo.completed 
                     ? 'text-subtext0 line-through' 
                     : 'text-text'
                 }`}
+                title={todo.text}
               >
                 {todo.text}
               </span>
@@ -250,7 +285,7 @@ const TodoList: React.FC = () => {
             onChange={(e) => setNewTodo(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Add a new task..."
-            className="bg-base border-none text-text placeholder:text-subtext0 text-sm"
+            className="pt-4 bg-base border-none text-text placeholder:text-subtext0 text-sm"
           />
         </div>
       )}
@@ -267,7 +302,7 @@ const TodoList: React.FC = () => {
             }
           }}
           size="sm"
-          className="bg-mantle text-subtext0 hover:bg-base border-surface2 w-8 h-8 p-0"
+          className="bg-mantle text-subtext0 hover:bg-mauve hover:bg-opacity-75 hover:text-mantle border-surface2 w-8 h-8 p-0"
         >
           <Plus size={16} />
         </Button>
@@ -281,7 +316,7 @@ const TodoList: React.FC = () => {
 
       {/* Keyboard shortcuts hint */}
       <div className="mt-6 text-xs text-subtext0 text-center">
-        <p>Space: play/pause • ±: volume • ↑↓: navigate • Enter: toggle • N: new • D: delete • E: edit</p>
+        <p>Play/Pause: Space • Volume: ± • Navigate: ↑↓ • Toggle: Enter • New: N • Delete: D • Edit: E</p>
       </div>
     </div>
   );

@@ -58,19 +58,19 @@ export const CoffeeAscii: React.FC<AsciiArtProps> = ({ className }) => {
   };
 
   return (
-    <div className={`ascii-art text-lavender font-mono ${className}`}>
+    <div className={`ascii-art text-lavender font-mono text-xs ${className}`}>
       <div className="relative">
         <div className="whitespace-pre-line">
-          <span className="block text-mauve whitespace-pre mb-2">{`   ${steamLine1}`}</span>
-          <span className="block text-pink whitespace-pre">{`    ${steamLine2}`}</span>
+          <span className="block text-mauve whitespace-pre mb-2">{`    ${steamLine1}`}</span>
+          <span className="block text-pink whitespace-pre">{`     ${steamLine2}`}</span>
           <div className="text-flamingo">
-            <span className="block whitespace-pre">  ........</span>
-            <span className="block whitespace-pre">  |      |]</span>
-            <span className="block whitespace-pre">  |      |</span>
-            <span className="block whitespace-pre">  \      /</span>
-            <span className="block whitespace-pre">   '----'</span>
+            <span className="block whitespace-pre">  ..........</span>
+            <span className="block whitespace-pre">  |        |]</span>
+            <span className="block whitespace-pre">  |        |</span>
+            <span className="block whitespace-pre">  \        /</span>
+            <span className="block whitespace-pre">   '------'</span>
           </div>
-          <span className="text-[0.8em] opacity-50 block whitespace-pre ml-[2em]">piedpiper</span>
+          <span className=" opacity-50 block whitespace-pre ml-[1.6em]">piedpiper</span>
         </div>
         
         {/* Seed display/input on hover */}
@@ -85,11 +85,11 @@ export const CoffeeAscii: React.FC<AsciiArtProps> = ({ className }) => {
               onChange={(e) => setSeedInput(e.target.value)}
               onKeyDown={handleKeyPress}
               onBlur={handleSeedSubmit}
-              className="w-16 h-6 text-xs text-center bg-surface0 border-surface2"
+              className="!text-xs px-1 text-xs text-center text-green bg-[rgba(0,0,0,0)] border-none"
               autoFocus
             />
           ) : (
-            <span className="text-xs text-subtext0 bg-surface0 px-1 rounded">
+            <span className="text-xs text-rosewater px-1 rounded">
               {audioEngine.getSeed()}
             </span>
           )}
