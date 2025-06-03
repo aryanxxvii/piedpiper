@@ -224,7 +224,7 @@ const TodoList: React.FC = () => {
     <div className="w-full max-w-md p-8 bg-mantle rounded-lg shadow-md">
       
       {/* Todo list - scrollable container */}
-      <div ref={todoListRef} className="space-y-2 mb-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+      <div ref={todoListRef} className="space-y-2 pb-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
         {todos.map((todo, index) => (
           <div 
             key={todo.id}
@@ -278,14 +278,14 @@ const TodoList: React.FC = () => {
 
       {/* Add new todo input */}
       {showAddInput && (
-        <div className="mb-4">
+        <div className="mb-4 px-3 py-0 ">
           <Input
             ref={inputRef}
             value={newTodo}
             onChange={(e) => setNewTodo(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Add a new task..."
-            className="pt-4 bg-base border-none text-text placeholder:text-subtext0 text-sm"
+            className="bg-base py-0 my-0 max-h-9 border-none text-text placeholder:text-subtext0 text-sm"
           />
         </div>
       )}
