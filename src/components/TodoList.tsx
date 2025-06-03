@@ -189,23 +189,19 @@ const TodoList: React.FC = () => {
 
   return (
     <div className="w-full max-w-md mx-auto bg-mantle rounded-lg p-6">
-      <div className="mb-6">
-        <h2 className="text-lg font-bold text-mauve mb-2">## Focus Tasks</h2>
-        <p className="text-sm text-subtext0">Keep track of what matters</p>
-      </div>
 
       {/* Todo list */}
       <div className="space-y-2 mb-4">
         {todos.map((todo, index) => (
           <div 
             key={todo.id} 
-            className={`flex items-center gap-3 p-2 rounded transition-colors ${
-              index === selectedIndex ? 'bg-surface0' : 'hover:bg-surface0'
+            className={`flex items-center gap-3 p-2 rounded-md  ${
+              index === selectedIndex ? 'ring-2 ring-mauve ring-opacity-50 hover:bg-base' : 'hover:bg-base'
             }`}
           >
             <button
               onClick={() => toggleTodo(todo.id)}
-              className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+              className={`w-4 h-4 rounded-md border-2 flex items-center justify-center transition-colors ${
                 todo.completed 
                   ? 'bg-green border-green' 
                   : 'border-surface2 hover:border-subtext0'
@@ -254,7 +250,7 @@ const TodoList: React.FC = () => {
             onChange={(e) => setNewTodo(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Add a new task..."
-            className="bg-surface0 border-surface2 text-text placeholder:text-subtext0"
+            className="bg-base border-none text-text placeholder:text-subtext0 text-sm"
           />
         </div>
       )}
@@ -271,7 +267,7 @@ const TodoList: React.FC = () => {
             }
           }}
           size="sm"
-          className="bg-surface0 hover:bg-surface1 border-surface2 w-8 h-8 p-0"
+          className="bg-mantle text-subtext0 hover:bg-base border-surface2 w-8 h-8 p-0"
         >
           <Plus size={16} />
         </Button>

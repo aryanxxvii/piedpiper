@@ -41,7 +41,7 @@ const MusicControls: React.FC = () => {
           <span
             key={index}
             className={`text-sm font-mono ${
-              index < filledBars ? 'text-mauve' : 'text-surface2'
+              index < filledBars ? 'text-text' : 'text-surface2'
             }`}
           >
             {index < filledBars ? '+' : '-'}
@@ -67,7 +67,7 @@ const MusicControls: React.FC = () => {
         variant="outline" 
         size="sm" 
         onClick={togglePlayback}
-        className="bg-surface0 hover:bg-surface1 border-none"
+        className="bg-[rgba(0,0,0,0)] hover:bg-[rgba(0,0,0,0)] hover:text-mauve border-none"
       >
         {isPlaying ? (
           <Pause size={16} />

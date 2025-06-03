@@ -34,7 +34,7 @@ export const CoffeeAscii: React.FC<AsciiArtProps> = ({ className }) => {
     };
 
     // Animate steam every 400ms
-    const interval = setInterval(animateSteam, 400);
+    const interval = setInterval(animateSteam, 800);
     return () => clearInterval(interval);
   }, []);
 
@@ -61,17 +61,21 @@ export const CoffeeAscii: React.FC<AsciiArtProps> = ({ className }) => {
     <div className={`ascii-art text-lavender font-mono ${className}`}>
       <div className="relative">
         <div className="whitespace-pre-line">
-          <span className="block text-subtext0">{`   ${steamLine1}`}</span>
-          <span className="block text-subtext0">{`    ${steamLine2}`}</span>
-          <span className="block">  ........</span>
-          <span className="block">  |      |]</span>
-          <span className="block">  \      /</span>
-          <span className="block">   `----'</span>
+          <span className="block text-mauve whitespace-pre mb-2">{`   ${steamLine1}`}</span>
+          <span className="block text-pink whitespace-pre">{`    ${steamLine2}`}</span>
+          <div className="text-flamingo">
+            <span className="block whitespace-pre">  ........</span>
+            <span className="block whitespace-pre">  |      |]</span>
+            <span className="block whitespace-pre">  |      |</span>
+            <span className="block whitespace-pre">  \      /</span>
+            <span className="block whitespace-pre">   '----'</span>
+          </div>
+          <span className="text-[0.8em] opacity-50 block whitespace-pre ml-[2em]">piedpiper</span>
         </div>
         
         {/* Seed display/input on hover */}
         <div 
-          className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity cursor-pointer"
+          className="absolute inset-0 mt-8 ml-2 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity cursor-pointer"
           onMouseEnter={() => setSeedInput(audioEngine.getSeed().toString())}
           onClick={() => setShowSeedInput(true)}
         >

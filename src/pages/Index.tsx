@@ -30,6 +30,8 @@ const Index = () => {
       <div className="container mx-auto px-4 flex items-center justify-center max-w-md">
         <TodoList />
       </div>
+      {/* Seed display - below time elapsed
+      <SeedDisplay /> */}
       
       {/* Music controls - bottom left */}
       <MusicControls />
@@ -37,8 +39,6 @@ const Index = () => {
       {/* Time elapsed - bottom center */}
       <TimeElapsed />
       
-      {/* Seed display - below time elapsed */}
-      <SeedDisplay />
       
       {/* Animated Coffee Cup - bottom right */}
       <div className="fixed bottom-4 right-4 z-40">
