@@ -2,4 +2,4 @@
 
 Procedural Lofi 🌱
 
-![screenshot](/public/og-image)
+![screenshot](/public/og-image.png)
