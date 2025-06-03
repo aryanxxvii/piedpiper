@@ -26,6 +26,7 @@ class AudioEngine {
   private reverbNode: ConvolverNode | null = null;
   private intervalId: number | null = null;
   private currentVolume: number = 0.4;
+  private currentSeed: number = 0;
 
   constructor() {
     this.mainGainNode = audioContext.createGain();
@@ -41,6 +42,18 @@ class AudioEngine {
     
     // Initialize reverb
     this.createReverb();
+    
+    // Initialize with a random seed based on current time
+    this.currentSeed = Date.now() % 10000;
+  }
+  
+  // Simple seeded random number generator
+  private seededRandom(seed: number): () => number {
+    let value = seed;
+    return function() {
+      value = (value * 9301 + 49297) % 233280;
+      return value / 233280;
+    };
   }
   
   private async createReverb() {
@@ -189,13 +202,13 @@ class AudioEngine {
     }
   }
   
-  private getRandomNote(scale: number[]): number {
+  private getRandomNote(scale: number[], rng: () => number): number {
     const baseNote = 220; // A3
-    const noteIndex = Math.floor(Math.random() * scale.length);
+    const noteIndex = Math.floor(rng() * scale.length);
     return baseNote * Math.pow(2, scale[noteIndex] / 12);
   }
   
-  private generateMelodicPattern(): Note[] {
+  private generateMelodicPattern(rng: () => number): Note[] {
     // Use different scales for variety
     const scales = [
       [0, 2, 4, 7, 9, 12, 14], // A minor pentatonic
@@ -204,7 +217,7 @@ class AudioEngine {
       [0, 3, 5, 6, 7, 10, 12], // A blues
     ];
     
-    const scale = scales[Math.floor(Math.random() * scales.length)];
+    const scale = scales[Math.floor(rng() * scales.length)];
     
     const pattern: Note[] = [];
     const patternLength = 16; // 16 beats pattern
@@ -212,14 +225,14 @@ class AudioEngine {
     // Generate a simple melodic pattern with more variation
     for (let i = 0; i < patternLength; i++) {
       // Skip some beats for rhythm - more variation
-      if (Math.random() < 0.5) continue;
+      if (rng() < 0.5) continue;
       
       // Random note from scale
       const note = {
-        frequency: this.getRandomNote(scale),
-        duration: Math.random() < 0.6 ? 1 : Math.random() < 0.8 ? 0.5 : 2, // varied durations
-        velocity: 0.15 + Math.random() * 0.25, // random velocity
-        type: (Math.random() < 0.6 ? 'sine' : Math.random() < 0.8 ? 'triangle' : 'sawtooth') as OscillatorType
+        frequency: this.getRandomNote(scale, rng),
+        duration: rng() < 0.6 ? 1 : rng() < 0.8 ? 0.5 : 2, // varied durations
+        velocity: 0.15 + rng() * 0.25, // random velocity
+        type: (rng() < 0.6 ? 'sine' : rng() < 0.8 ? 'triangle' : 'sawtooth') as OscillatorType
       };
       
       pattern.push(note);
@@ -228,7 +241,7 @@ class AudioEngine {
     return pattern;
   }
   
-  private generateDrumPattern(): DrumPattern {
+  private generateDrumPattern(rng: () => number): DrumPattern {
     const pattern: DrumPattern = {
       kick: new Array(16).fill(0),
       snare: new Array(16).fill(0),
@@ -243,7 +256,7 @@ class AudioEngine {
       [0, 8, 10], // with extra hit
     ];
     
-    const kickPattern = kickPatterns[Math.floor(Math.random() * kickPatterns.length)];
+    const kickPattern = kickPatterns[Math.floor(rng() * kickPatterns.length)];
     kickPattern.forEach(beat => pattern.kick[beat] = 1);
     
     // Varied snare patterns
@@ -254,13 +267,13 @@ class AudioEngine {
       [2, 6, 10, 14], // complex
     ];
     
-    const snarePattern = snarePatterns[Math.floor(Math.random() * snarePatterns.length)];
+    const snarePattern = snarePatterns[Math.floor(rng() * snarePatterns.length)];
     snarePattern.forEach(beat => pattern.snare[beat] = 1);
     
     // More varied hihat patterns
     for (let i = 0; i < 16; i++) {
       // Different hihat patterns for variety
-      if (Math.random() < 0.7) {
+      if (rng() < 0.7) {
         pattern.hihat[i] = 1;
       }
     }
@@ -268,7 +281,7 @@ class AudioEngine {
     return pattern;
   }
   
-  private generateChordProgression() {
+  private generateChordProgression(rng: () => number) {
     // Different chord progressions for variety
     const progressions = [
       // Am - Dm - Em - Am
@@ -294,7 +307,7 @@ class AudioEngine {
       ]
     ];
     
-    return progressions[Math.floor(Math.random() * progressions.length)];
+    return progressions[Math.floor(rng() * progressions.length)];
   }
   
   private scheduleChord(chord: { root: number, intervals: number[] }, time: number, duration: number) {
@@ -382,11 +395,22 @@ class AudioEngine {
   private chordProgression: { root: number, intervals: number[] }[] = [];
   
   public generateNewPatterns(): void {
-    // Generate fresh patterns each time
-    this.chordProgression = this.generateChordProgression();
-    this.melodicPattern = this.generateMelodicPattern();
-    this.drumPattern = this.generateDrumPattern();
+    // Use the current seed to generate patterns
+    const rng = this.seededRandom(this.currentSeed);
+    
+    // Generate fresh patterns each time using seeded random
+    this.chordProgression = this.generateChordProgression(rng);
+    this.melodicPattern = this.generateMelodicPattern(rng);
+    this.drumPattern = this.generateDrumPattern(rng);
     this.currentBeat = 0;
+  }
+
+  public setSeed(seed: number): void {
+    this.currentSeed = seed;
+  }
+
+  public getSeed(): number {
+    return this.currentSeed;
   }
 
   public async start(): Promise<void> {

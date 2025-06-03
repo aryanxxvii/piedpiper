@@ -1,16 +1,17 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, X } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import audioEngine from '@/utils/audioEngine';
 
+interface Todo {
+  id: number;
+  text: string;
+  completed: boolean;
+}
+
 const TodoList: React.FC = () => {
-  const [todos, setTodos] = useState([
-    { id: 1, text: 'Listen to some lofi beats', completed: false },
-    { id: 2, text: 'Focus on deep work', completed: false },
-    { id: 3, text: 'Take a mindful break', completed: true },
-  ]);
+  const [todos, setTodos] = useState<Todo[]>([]);
   const [newTodo, setNewTodo] = useState('');
   const [showAddInput, setShowAddInput] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -18,6 +19,24 @@ const TodoList: React.FC = () => {
   const [editText, setEditText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+
+  // Load todos from localStorage on component mount
+  useEffect(() => {
+    const savedTodos = localStorage.getItem('focus-todos');
+    if (savedTodos) {
+      try {
+        const parsedTodos = JSON.parse(savedTodos);
+        setTodos(parsedTodos);
+      } catch (error) {
+        console.error('Error loading todos from localStorage:', error);
+      }
+    }
+  }, []);
+
+  // Save todos to localStorage whenever todos change
+  useEffect(() => {
+    localStorage.setItem('focus-todos', JSON.stringify(todos));
+  }, [todos]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
