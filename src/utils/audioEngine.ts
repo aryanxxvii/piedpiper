@@ -10,7 +10,7 @@ type Note = {
   decay?: number;  // seconds
   sustain?: number; // level 0-1 (of velocity)
   release?: number; // seconds (duration of release phase)
-  instrument?: 'pad' | 'bass' | 'lead' | 'arp' | 'atmosphere' | 'drum' | 'electricPiano'; // For easier debugging/specific handling
+  instrument?: 'pad' | 'bass' | 'lead' | 'arp' | 'atmosphere' | 'drum' | 'electricPiano' | 'flute' | 'shaker' | 'pluck'; // For easier debugging/specific handling
   // For melody/arp scheduling:
   targetBeatInBar?: number; // Which quarter beat (0-3) or 16th step (0-15) this note should play on
   arpIndex?: number; // Index in the arpeggio sequence
@@ -69,6 +69,7 @@ class AudioEngine {
   private currentArpNotes: Note[] = [];
   private currentAtmosphereNote: Note | null = null; // Single long drone
   private currentElectricPianoNotes: Note[] = [];
+  private currentFluteNotes: Note[] = [];
 
   private currentDrumPattern: DrumPattern = { kick: [], snare: [], hihat: [] };
   private vinylCrackle: boolean = false;
@@ -113,6 +114,13 @@ class AudioEngine {
   };
 
   constructor() {
+    const storedVolume = localStorage.getItem('audioEngineVolume');
+    if (storedVolume !== null) {
+      const parsedVolume = parseFloat(storedVolume);
+      if (!isNaN(parsedVolume) && parsedVolume >= 0 && parsedVolume <= 1) {
+        this.currentVolume = parsedVolume;
+      }
+    }
     this.mainGainNode = audioContext.createGain();
     this.mainGainNode.gain.value = this.currentVolume;
 
@@ -225,6 +233,12 @@ class AudioEngine {
             baseDecay = note.decay ?? 0.8; // Longer decay for EP resonance
             baseSustain = note.sustain ?? 0.3;
             baseRelease = note.release ?? 0.5;
+            break;
+        case 'flute':
+            baseAttack = note.attack ?? 0.03;
+            baseDecay = note.decay ?? 0.25;
+            baseSustain = note.sustain ?? 0.5;
+            baseRelease = note.release ?? 0.65;
             break;
         default:
             baseAttack = note.attack ?? 0.01;
@@ -355,6 +369,40 @@ class AudioEngine {
             oscillators.push(oscEp1, oscEp2);
             break;
 
+        case 'flute':
+            // Breath-y flute using sine + gentle noise through bandpass
+            const fluteFilter = audioContext.createBiquadFilter();
+            fluteFilter.type = 'bandpass';
+            fluteFilter.frequency.value = note.frequency;
+            fluteFilter.Q.value = 8;
+            fluteFilter.connect(noteGain);
+
+            const oscFlute = createOscillatorNode('sine');
+            oscFlute.connect(fluteFilter);
+            oscillators.push(oscFlute);
+
+            // Subtle breath noise layer
+            const noiseDur = totalNoteDuration;
+            const noiseBuf = audioContext.createBuffer(1, audioContext.sampleRate * noiseDur, audioContext.sampleRate);
+            const data = noiseBuf.getChannelData(0);
+            for (let i = 0; i < data.length; i++) {
+                data[i] = (Math.random() * 2 - 1) * 0.02;
+            }
+            const noiseSrc = audioContext.createBufferSource();
+            noiseSrc.buffer = noiseBuf;
+            const noiseBP = audioContext.createBiquadFilter();
+            noiseBP.type = 'bandpass';
+            noiseBP.frequency.value = note.frequency * 2;
+            noiseBP.Q.value = 1;
+            const noiseGain = audioContext.createGain();
+            noiseGain.gain.value = 0.1;
+            noiseSrc.connect(noiseBP);
+            noiseBP.connect(noiseGain);
+            noiseGain.connect(noteGain);
+            noiseSrc.start(time);
+            noiseSrc.stop(time + totalNoteDuration);
+            break;
+
         default: // Fallback for 'drum' or unspecified instruments if they reach here
             const oscDefault = createOscillatorNode(note.type || 'sine');
             oscDefault.connect(noteGain);
@@ -388,6 +436,11 @@ class AudioEngine {
       gain.connect(drumGainOutputNode);
       osc.start(time);
       osc.stop(time + 0.4);
+
+      // Sidechain ducking for rest of mix
+      this.mainGainNode.gain.cancelScheduledValues(time);
+      this.mainGainNode.gain.setValueAtTime(this.currentVolume * 0.65, time);
+      this.mainGainNode.gain.linearRampToValueAtTime(this.currentVolume, time + 0.3);
     } else if (type === 'snare') {
       const noiseDuration = 0.15;
       const noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * noiseDuration, audioContext.sampleRate);
@@ -667,6 +720,56 @@ class AudioEngine {
         }
     }
 
+    // --- Electric Piano ---
+    this.currentElectricPianoNotes = [];
+    if (this.currentChord && this.currentChord.intervals.length > 0) {
+        const epBeats: number[] = [];
+        // Decide which quarter beats (0-3) will receive chord stabs
+        for (let beat = 0; beat < 4; beat++) {
+            const threshold = beat === 0 ? 0.9 : 0.4; // Strong down-beat, some probability on others
+            if (rng() < threshold) epBeats.push(beat);
+        }
+
+        epBeats.forEach(beat => {
+            // Select 3–5 chord tones for the EP voicing
+            const chordIntervalsForEP = this.currentChord!.intervals.slice(0, rng() < 0.6 ? 3 : this.currentChord!.intervals.length);
+            const epOctaveShift = -1; // EP sits an octave below pad root to avoid clashing with lead
+            chordIntervalsForEP.forEach(interval => {
+                this.currentElectricPianoNotes.push({
+                    frequency: this.currentChord!.rootFreq * semitoneToRatio(interval + epOctaveShift * 12),
+                    duration: 0.7 + rng() * 0.3, // Short, slightly varied length
+                    velocity: 0.11 + rng() * 0.05,
+                    type: 'sine',
+                    attack: 0.02,
+                    decay: 0.6,
+                    sustain: 0.3,
+                    release: 0.5,
+                    instrument: 'electricPiano',
+                    targetBeatInBar: beat
+                });
+            });
+        });
+    }
+
+    // --- Flute ---
+    this.currentFluteNotes = [];
+    if (rng() < 0.8) { // Most bars have flute lines
+        const fluteNoteCount = 1 + Math.floor(rng() * 3); // 1–3 notes
+        for (let i = 0; i < fluteNoteCount; i++) {
+            const targetBeat = Math.floor(rng() * 4); // Quarter-beat placement
+            const scaleDegree = this.scale[Math.floor(rng() * this.scale.length)];
+            const freq = this.keyRootFreq * semitoneToRatio(scaleDegree + 12); // One octave above key
+            this.currentFluteNotes.push({
+                frequency: freq,
+                duration: 0.6 + rng() * 0.4,
+                velocity: 0.09 + rng() * 0.05,
+                type: 'sine',
+                instrument: 'flute',
+                targetBeatInBar: targetBeat,
+            });
+        }
+    }
+
     // --- Atmosphere/Drone ---
     // Play a low root or fifth of the current chord, very long
     if (this.barCount % (2 + Math.floor(rng()*3)) === 0 || !this.currentAtmosphereNote) { // Change drone every 2-4 bars
@@ -754,6 +857,13 @@ class AudioEngine {
       if (target16thStep === current16th) {
         this.scheduleNote(note, time);
       }
+    });
+
+    // Schedule Flute notes
+    this.currentFluteNotes.forEach(note => {
+        if (note.targetBeatInBar! * 4 === current16th) {
+            this.scheduleNote(note, time);
+        }
     });
 
     // Drums
@@ -849,8 +959,11 @@ class AudioEngine {
 
   public setVolume(volume: number): void {
     this.currentVolume = Math.max(0, Math.min(1, volume));
-    this.mainGainNode.gain.cancelScheduledValues(audioContext.currentTime);
-    this.mainGainNode.gain.setValueAtTime(this.currentVolume, audioContext.currentTime);
+    if (this.isPlaying) { // Only directly set gain if playing, start() will handle it otherwise
+        this.mainGainNode.gain.cancelScheduledValues(audioContext.currentTime);
+        this.mainGainNode.gain.setValueAtTime(this.currentVolume, audioContext.currentTime);
+    }
+    localStorage.setItem('audioEngineVolume', this.currentVolume.toString());
   }
   public getVolume(): number { return this.currentVolume; }
 

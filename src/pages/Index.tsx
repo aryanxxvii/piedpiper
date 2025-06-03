@@ -16,7 +16,8 @@ const Index = () => {
   }, []);
 
   return (
-    <div className="h-screen w-full flex items-center justify-center bg-crust selection:bg-mauve selection:bg-opacity-25 overflow-hidden">
+    <div className="h-screen w-full flex 
+    pb-32 items-center justify-center bg-crust selection:bg-mauve selection:bg-opacity-25 overflow-hidden">
       
       {/* Main todo list */}
       <div className="container mx-auto px-4 flex items-center justify-center max-w-md pt-0">

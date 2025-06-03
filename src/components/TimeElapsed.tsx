@@ -5,7 +5,13 @@ type TimeDisplayMode = 'elapsed' | 'current';
 
 const TimeElapsed: React.FC = () => {
   const [elapsed, setElapsed] = useState(0);
-  const [displayMode, setDisplayMode] = useState<TimeDisplayMode>('elapsed');
+  const [displayMode, setDisplayMode] = useState<TimeDisplayMode>(() => {
+    const storedMode = localStorage.getItem('timeDisplayMode');
+    if (storedMode === 'elapsed' || storedMode === 'current') {
+      return storedMode as TimeDisplayMode;
+    }
+    return 'elapsed'; // Default value
+  });
   const [currentTime, setCurrentTime] = useState<string>('');
 
   // Update elapsed time when playing
@@ -26,6 +32,11 @@ const TimeElapsed: React.FC = () => {
       clearInterval(interval);
     };
   }, []);
+
+  // Save displayMode to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('timeDisplayMode', displayMode);
+  }, [displayMode]);
 
   const formatTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
