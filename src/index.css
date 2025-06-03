@@ -1,7 +1,14 @@
 
+@import url('https://fonts.googleapis.com/css2?family=Chivo+Mono:ital,wght@0,100..900;1,100..900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Ensure all elements use Chivo Mono */
+* {
+  font-family: 'Chivo Mono', monospace !important;
+}
 
 @layer base {
   :root {
@@ -18,6 +25,7 @@
     @apply bg-base text-text font-mono;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-family: 'Chivo Mono', monospace;
   }
 }
 
