@@ -1,6 +1,8 @@
 
 import React, { useEffect } from "react";
 import MusicPlayer from "@/components/MusicPlayer";
+import TodoList from "@/components/TodoList";
+import PersistentCat from "@/components/PersistentCat";
 import audioEngine from "@/utils/audioEngine";
 
 const Index = () => {
@@ -20,7 +22,13 @@ const Index = () => {
           </div>
         ))}
       </div>
-      <MusicPlayer />
+      
+      <div className="container mx-auto px-4 flex flex-col lg:flex-row items-center justify-center gap-8 max-w-6xl">
+        <MusicPlayer />
+        <TodoList />
+      </div>
+      
+      <PersistentCat />
     </div>
   );
 };

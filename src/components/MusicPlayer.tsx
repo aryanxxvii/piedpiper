@@ -4,7 +4,7 @@ import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import audioEngine from '@/utils/audioEngine';
-import { CoffeeAscii, SteamAscii, CatAscii } from './AsciiArt';
+import { CoffeeAscii, SteamAscii } from './AsciiArt';
 
 const MusicPlayer: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -83,15 +83,8 @@ const MusicPlayer: React.FC = () => {
         <SteamAscii className="top-[-5px] left-[52%] animate-steam-alt z-10" animationDelay="1s" />
       </div>
       
-      <h1 className="text-2xl font-bold text-pink mb-1">P̶i̶e̶d̶P̶i̶p̶e̶r̶</h1>
+      <h1 className="text-2xl font-bold text-pink mb-1">PiedPiper</h1>
       <p className="text-subtext0 mb-8">infinite lo-fi music in the background</p>
-      
-      {/* Cat appears sometimes when music is playing */}
-      {isPlaying && Math.random() > 0.7 && (
-        <div className="absolute right-4 bottom-24 animate-pulse-slow opacity-70">
-          <CatAscii />
-        </div>
-      )}
       
       {/* Controls */}
       <div className="w-full flex flex-col items-center space-y-6">
@@ -134,14 +127,6 @@ const MusicPlayer: React.FC = () => {
       {/* Elapsed time */}
       <div className="mt-8 text-sm text-subtext0">
         {formatTime(elapsedTime)}
-      </div>
-      
-      {/* Progress bar */}
-      <div className="absolute top-3 right-3 flex items-center text-xs">
-        <div className="text-subtext0 mr-2">100%</div>
-        <div className="w-16 h-2 bg-surface0 rounded-full">
-          <div className="h-full rounded-full bg-gradient-to-r from-mauve to-blue animate-pulse-slow"></div>
-        </div>
       </div>
       
       {/* Blinking dot */}
