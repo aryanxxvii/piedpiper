@@ -1,3 +1,4 @@
+
 import type { Config } from "tailwindcss";
 
 export default {
@@ -18,50 +19,72 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				mono: ['Cascadia Code', 'monospace'],
+			},
 			colors: {
+				// Catppuccin Mocha colors
+				base: '#1e1e2e', // base background
+				mantle: '#181825', // darker background
+				crust: '#11111b', // darkest background
+				text: '#cdd6f4', // main text
+				subtext0: '#a6adc8', // subtle text
+				subtext1: '#bac2de', // less subtle text
+				surface0: '#313244', // surface colors
+				surface1: '#45475a',
+				surface2: '#585b70',
+				overlay0: '#6c7086', // overlays
+				overlay1: '#7f849c',
+				overlay2: '#9399b2',
+				blue: '#89b4fa', // accent colors
+				lavender: '#b4befe',
+				sapphire: '#74c7ec',
+				sky: '#89dceb',
+				teal: '#94e2d5',
+				green: '#a6e3a1',
+				yellow: '#f9e2af',
+				peach: '#fab387',
+				maroon: '#eba0ac',
+				red: '#f38ba8',
+				mauve: '#cba6f7',
+				pink: '#f5c2e7',
+				flamingo: '#f2cdcd',
+				rosewater: '#f5e0dc',
+
+				// Original shadcn styles maintained for components
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',
-				background: 'hsl(var(--background))',
-				foreground: 'hsl(var(--foreground))',
+				background: '#1e1e2e', // base
+				foreground: '#cdd6f4', // text
 				primary: {
-					DEFAULT: 'hsl(var(--primary))',
-					foreground: 'hsl(var(--primary-foreground))'
+					DEFAULT: '#cba6f7', // mauve
+					foreground: '#1e1e2e', // base
 				},
 				secondary: {
-					DEFAULT: 'hsl(var(--secondary))',
-					foreground: 'hsl(var(--secondary-foreground))'
+					DEFAULT: '#313244', // surface0
+					foreground: '#cdd6f4', // text
 				},
 				destructive: {
-					DEFAULT: 'hsl(var(--destructive))',
-					foreground: 'hsl(var(--destructive-foreground))'
+					DEFAULT: '#f38ba8', // red
+					foreground: '#1e1e2e', // base
 				},
 				muted: {
-					DEFAULT: 'hsl(var(--muted))',
-					foreground: 'hsl(var(--muted-foreground))'
+					DEFAULT: '#45475a', // surface1
+					foreground: '#bac2de', // subtext1
 				},
 				accent: {
-					DEFAULT: 'hsl(var(--accent))',
-					foreground: 'hsl(var(--accent-foreground))'
+					DEFAULT: '#f5c2e7', // pink 
+					foreground: '#1e1e2e', // base
 				},
 				popover: {
-					DEFAULT: 'hsl(var(--popover))',
-					foreground: 'hsl(var(--popover-foreground))'
+					DEFAULT: '#181825', // mantle
+					foreground: '#cdd6f4', // text
 				},
 				card: {
-					DEFAULT: 'hsl(var(--card))',
-					foreground: 'hsl(var(--card-foreground))'
+					DEFAULT: '#1e1e2e', // base
+					foreground: '#cdd6f4', // text
 				},
-				sidebar: {
-					DEFAULT: 'hsl(var(--sidebar-background))',
-					foreground: 'hsl(var(--sidebar-foreground))',
-					primary: 'hsl(var(--sidebar-primary))',
-					'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
-					accent: 'hsl(var(--sidebar-accent))',
-					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
-					border: 'hsl(var(--sidebar-border))',
-					ring: 'hsl(var(--sidebar-ring))'
-				}
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
@@ -84,11 +107,32 @@ export default {
 					to: {
 						height: '0'
 					}
-				}
+				},
+				'steam': {
+					'0%, 100%': { transform: 'translateY(0) scale(1)', opacity: '0.7' },
+					'50%': { transform: 'translateY(-10px) scale(1.1)', opacity: '0.4' },
+				},
+				'fade-in': {
+					'0%': { opacity: '0' },
+					'100%': { opacity: '1' },
+				},
+				'fade-out': {
+					'0%': { opacity: '1' },
+					'100%': { opacity: '0' },
+				},
+				'pulse-slow': {
+					'0%, 100%': { opacity: '1' },
+					'50%': { opacity: '0.7' },
+				},
 			},
 			animation: {
 				'accordion-down': 'accordion-down 0.2s ease-out',
-				'accordion-up': 'accordion-up 0.2s ease-out'
+				'accordion-up': 'accordion-up 0.2s ease-out',
+				'steam': 'steam 3s ease-in-out infinite',
+				'steam-alt': 'steam 2.5s ease-in-out infinite',
+				'fade-in': 'fade-in 0.5s ease-in',
+				'fade-out': 'fade-out 0.5s ease-out',
+				'pulse-slow': 'pulse-slow 4s ease-in-out infinite',
 			}
 		}
 	},
