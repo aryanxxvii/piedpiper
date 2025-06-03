@@ -20,9 +20,9 @@ export default {
 		},
 		extend: {
 			fontFamily: {
-				mono: ['Chivo Mono', 'monospace'],
-				sans: ['Chivo Mono', 'monospace'],
-				serif: ['Chivo Mono', 'monospace'],
+				mono: ['Geist Mono', 'monospace'],
+				sans: ['Geist Mono', 'monospace'],
+				serif: ['Geist Mono', 'monospace'],
 			},
 			colors: {
 				// Catppuccin Mocha colors
