@@ -14,10 +14,10 @@ const TodoList: React.FC = () => {
   const [newTodo, setNewTodo] = useState('');
   const [showAddInput, setShowAddInput] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [volume, setVolume] = useState(0.4);
-  const [muted, setMuted] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -26,6 +26,15 @@ const TodoList: React.FC = () => {
         if (e.key === 'Escape') {
           setShowAddInput(false);
           setNewTodo('');
+        }
+        return;
+      }
+
+      // Don't handle keys when editing
+      if (editingId && document.activeElement === editInputRef.current) {
+        if (e.key === 'Escape') {
+          setEditingId(null);
+          setEditText('');
         }
         return;
       }
@@ -55,6 +64,20 @@ const TodoList: React.FC = () => {
           setShowAddInput(true);
           setTimeout(() => inputRef.current?.focus(), 0);
           break;
+        case 'd':
+        case 'D':
+          e.preventDefault();
+          if (todos.length > 0) {
+            deleteTodo(todos[selectedIndex].id);
+          }
+          break;
+        case 'e':
+        case 'E':
+          e.preventDefault();
+          if (todos.length > 0) {
+            startEditing(todos[selectedIndex]);
+          }
+          break;
         case '+':
         case '=':
           e.preventDefault();
@@ -70,24 +93,16 @@ const TodoList: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [todos, selectedIndex, showAddInput, volume, muted]);
-
-  useEffect(() => {
-    if (muted) {
-      audioEngine.setVolume(0);
-    } else {
-      audioEngine.setVolume(volume);
-    }
-  }, [volume, muted]);
+  }, [todos, selectedIndex, showAddInput, editingId]);
 
   const togglePlayback = async () => {
-    if (isPlaying) {
+    if (audioEngine.getIsPlaying()) {
       audioEngine.stop();
-      setIsPlaying(false);
     } else {
       try {
+        // Generate new music patterns each time
+        audioEngine.generateNewPatterns();
         await audioEngine.start();
-        setIsPlaying(true);
       } catch (error) {
         console.error("Failed to start audio:", error);
       }
@@ -95,11 +110,9 @@ const TodoList: React.FC = () => {
   };
 
   const adjustVolume = (delta: number) => {
-    const newVolume = Math.max(0, Math.min(1, volume + delta));
-    setVolume(newVolume);
-    if (muted && newVolume > 0) {
-      setMuted(false);
-    }
+    const currentVolume = audioEngine.getVolume();
+    const newVolume = Math.max(0, Math.min(1, currentVolume + delta));
+    audioEngine.setVolume(newVolume);
   };
 
   const addTodo = () => {
@@ -127,9 +140,31 @@ const TodoList: React.FC = () => {
     }
   };
 
+  const startEditing = (todo: { id: number; text: string }) => {
+    setEditingId(todo.id);
+    setEditText(todo.text);
+    setTimeout(() => editInputRef.current?.focus(), 0);
+  };
+
+  const saveEdit = () => {
+    if (editText.trim() && editingId) {
+      setTodos(todos.map(todo => 
+        todo.id === editingId ? { ...todo, text: editText.trim() } : todo
+      ));
+      setEditingId(null);
+      setEditText('');
+    }
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       addTodo();
+    }
+  };
+
+  const handleEditKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveEdit();
     }
   };
 
@@ -161,15 +196,26 @@ const TodoList: React.FC = () => {
                 <span className="text-base text-xs">✓</span>
               )}
             </button>
-            <span 
-              className={`flex-1 text-sm ${
-                todo.completed 
-                  ? 'text-subtext0 line-through' 
-                  : 'text-text'
-              }`}
-            >
-              {todo.text}
-            </span>
+            {editingId === todo.id ? (
+              <Input
+                ref={editInputRef}
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyPress={handleEditKeyPress}
+                onBlur={saveEdit}
+                className="flex-1 bg-surface0 border-surface2 text-text placeholder:text-subtext0 text-sm"
+              />
+            ) : (
+              <span 
+                className={`flex-1 text-sm ${
+                  todo.completed 
+                    ? 'text-subtext0 line-through' 
+                    : 'text-text'
+                }`}
+              >
+                {todo.text}
+              </span>
+            )}
             <button
               onClick={() => deleteTodo(todo.id)}
               className="text-subtext0 hover:text-red transition-colors opacity-0 hover:opacity-100"
@@ -220,7 +266,7 @@ const TodoList: React.FC = () => {
 
       {/* Keyboard shortcuts hint */}
       <div className="mt-6 text-xs text-subtext0 text-center">
-        <p>Space: play/pause • ±: volume • ↑↓: navigate • Enter: toggle • N: new task</p>
+        <p>Space: play/pause • ±: volume • ↑↓: navigate • Enter: toggle • N: new • D: delete • E: edit</p>
       </div>
     </div>
   );
