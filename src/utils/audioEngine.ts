@@ -20,7 +20,16 @@ type Note = { // Basic Note definition, will be expanded later
   // For scheduling precise timings
   targetBeatInBar?: number; 
   target16thStep?: number;
+  type?: string; // Added
+  decay?: number; // Added
+  sustain?: number; // Added
 };
+
+interface DrumPattern {
+  kick: number[];
+  snare: number[];
+  hihat: number[];
+}
 
 class AudioEngine {
   private audioContext: AudioContext;
@@ -49,8 +58,6 @@ class AudioEngine {
   // Static definitions for harmonic content generation
   private static SCALES = [
     { name: 'Major', intervals: [0, 2, 4, 5, 7, 9, 11] },
-    { name: 'Natural Minor', intervals: [0, 2, 3, 5, 7, 8, 10] },
-    { name: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
     { name: 'Mixolydian', intervals: [0, 2, 4, 5, 7, 9, 10] },
     { name: 'Lydian', intervals: [0, 2, 4, 6, 7, 9, 11] },
   ];
@@ -65,12 +72,14 @@ class AudioEngine {
     196.00  // G3
   ];
 
-  private static PROGRESSION_TEMPLATES = [ // Using scale degrees (0-indexed)
-    [0, 3, 4, 0],    // I-IV-V-I
-    [0, 5, 3, 4],    // I-vi-IV-V 
-    [1, 4, 0],       // ii-V-I
-    [0, 1, 3, 4],    // I-ii-IV-V
-    [5, 1, 3, 0],    // vi-ii-IV-I
+  private static PROGRESSION_TEMPLATES = [
+    [0, 3, 4, 0],    // I-IV-V-I (Classic positive)
+    [1, 4, 0, 0],    // ii-V-I-I (Strong resolution to tonic)
+    [0, 5, 1, 4],    // I-vi-ii-V (Common, generally upbeat in major context)
+    [0, 1, 3, 4],    // I-ii-IV-V (Smooth, positive movement)
+    [3, 4, 0, 0],    // IV-V-I-I (Plagal-influenced, bright)
+    [0, 4, 5, 4],    // I-V-vi-V (Uses vi but surrounded by I and V, common pop/jazz)
+    [0, 3, 0, 4]     // I-IV-I-V (Stable, emphasizing tonic and subdominant)
   ];
 
   // Instance properties for harmonic content
@@ -95,6 +104,7 @@ class AudioEngine {
   private atmosphereNextChangeBar: number = 0;
   private currentElectricPianoNotes: Note[] = []; 
   private currentFluteNotes: Note[] = []; 
+  private currentDrumPattern: DrumPattern | null = null; // Added
 
   // Chord Voicings
   private static CHORD_VOICINGS = {
@@ -295,22 +305,69 @@ class AudioEngine {
        else quality = 'triadMin'; 
     }
     
-    const playSeventh = rng() < 0.7; 
+    const playSeventh = rng() < 0.9; // Increased chance for 7ths
+    const playNinth = rng() < 0.5;   // Chance for 9ths on top of 7ths
 
     switch (quality) {
       case 'maj7':
-        return playSeventh ? AudioEngine.CHORD_VOICINGS.maj7 : AudioEngine.CHORD_VOICINGS.triadMaj;
-      case 'min7':
-        return playSeventh ? AudioEngine.CHORD_VOICINGS.min7 : AudioEngine.CHORD_VOICINGS.triadMin;
-      case 'dom7':
-        return playSeventh ? AudioEngine.CHORD_VOICINGS.dom7 : AudioEngine.CHORD_VOICINGS.triadMaj;
-      case 'triadMaj':
+        if (playSeventh) {
+          if (playNinth && AudioEngine.CHORD_VOICINGS.maj9) return AudioEngine.CHORD_VOICINGS.maj9;
+          return AudioEngine.CHORD_VOICINGS.maj7;
+        }
         return AudioEngine.CHORD_VOICINGS.triadMaj;
-      case 'triadMin':
-        if (thirdInterval === 3 && fifthInterval === 6) return [0, 3, 6]; 
+      case 'min7':
+        // Handle m7b5 case if relevant based on intervals (already somewhat handled by quality detection)
+        // For now, directly use min7 or extend to min9
+        if (playSeventh) {
+          // A more robust m7b5 check could be:
+          // const isHalfDim = (thirdInterval === 3 && fifthInterval === 6 && seventhInterval === 10);
+          // if (isHalfDim && AudioEngine.CHORD_VOICINGS.m7b5) {
+          //   return AudioEngine.CHORD_VOICINGS.m7b5;
+          // }
+          if (playNinth && AudioEngine.CHORD_VOICINGS.min9) return AudioEngine.CHORD_VOICINGS.min9;
+          return AudioEngine.CHORD_VOICINGS.min7;
+        }
+        return AudioEngine.CHORD_VOICINGS.triadMin;
+      case 'dom7':
+        // Dominant chords almost always include the 7th in jazz/lofi
+        if (playNinth && AudioEngine.CHORD_VOICINGS.dom9) return AudioEngine.CHORD_VOICINGS.dom9;
+        // Add chance for dom7sus4 if contextually appropriate (e.g. V7sus before V7)
+        // For now, defaulting to dom7 or dom9.
+        return AudioEngine.CHORD_VOICINGS.dom7; // No playSeventh check, dom7 implies 7th
+      case 'triadMaj':
+        // This case implies playSeventh was false or quality was determined as major triad initially
+        return AudioEngine.CHORD_VOICINGS.triadMaj;
+      case 'triadMin': // This quality is set if the 3rd is minor.
+        if (thirdInterval === 3 && fifthInterval === 6) { // Potential diminished, half-diminished, or fully diminished 7th
+            if (playSeventh) {
+                if (seventhInterval === 10 && AudioEngine.CHORD_VOICINGS.m7b5) { // Half-diminished 7th
+                    return AudioEngine.CHORD_VOICINGS.m7b5;
+                } else if (seventhInterval === 9 && AudioEngine.CHORD_VOICINGS.dim7) { // Fully diminished 7th
+                    return AudioEngine.CHORD_VOICINGS.dim7;
+                }
+            }
+            // Fallback to diminished triad if no 7th or specific 7th voicing not found/matched
+            return AudioEngine.CHORD_VOICINGS.dimTriad || [0,3,6];
+        }
+        // Standard minor triad (if not diminished and playSeventh was false or quality was 'triadMin' initially)
         return AudioEngine.CHORD_VOICINGS.triadMin;
       default: 
-        if (thirdInterval === 4 && fifthInterval === 8) return [0,4,8]; 
+        // Fallback for 'other' quality or unhandled scenarios
+        if (thirdInterval === 4) { // Major-like
+            if (playSeventh && seventhInterval === 11 && AudioEngine.CHORD_VOICINGS.maj7){
+                if(playNinth && AudioEngine.CHORD_VOICINGS.maj9) return AudioEngine.CHORD_VOICINGS.maj9;
+                return AudioEngine.CHORD_VOICINGS.maj7;
+            }
+            return AudioEngine.CHORD_VOICINGS.triadMaj;
+        } else if (thirdInterval === 3) { // Minor-like
+            if (playSeventh && seventhInterval === 10 && AudioEngine.CHORD_VOICINGS.min7){
+                 if(playNinth && AudioEngine.CHORD_VOICINGS.min9) return AudioEngine.CHORD_VOICINGS.min9;
+                return AudioEngine.CHORD_VOICINGS.min7;
+            }
+             if (thirdInterval === 3 && fifthInterval === 6) return AudioEngine.CHORD_VOICINGS.dimTriad || [0,3,6];
+            return AudioEngine.CHORD_VOICINGS.triadMin;
+        }
+        // Ultimate fallback
         return AudioEngine.CHORD_VOICINGS.triadMaj; 
     }
   }
@@ -398,12 +455,12 @@ class AudioEngine {
     this.currentPadNotes = ledPadFrequencies.map(freq => ({
       frequency: freq,
       duration: 3.8, 
-      velocity: 0.1 + this.seededRandom(this.currentSeed + this.barCount + freq)() * 0.05,
-      type: 'triangle', 
-      attack: 1.5,    
-      decay: 1.0,     
-      sustain: 0.7,   
-      release: 2.0,   
+      velocity: 0.08 + this.seededRandom(this.currentSeed + this.barCount + freq)() * 0.04, // Adjusted Velocity
+      type: 'sine', // Changed type
+      attack: 2.0 + rng() * 0.5,    // Adjusted Attack
+      decay: 1.5,                   // Adjusted Decay
+      sustain: 0.6,                 // Adjusted Sustain
+      release: 2.5 + rng() * 0.5,   // Adjusted Release
       instrument: 'pad',
     }));
     this.prevPadFrequencies = [...ledPadFrequencies]; 
@@ -434,49 +491,135 @@ class AudioEngine {
       }
       if (bassFrequency < 25) bassFrequency = 25;
 
+      let bassTargetBeat = 0; // Default on the downbeat
+      const bassRhythmRng = rng();
+      if (bassRhythmRng < 0.2 && this.currentDrumPattern && this.currentDrumPattern.kick[3] > 0) { // Follow kick on 'a' of 1
+          bassTargetBeat = 3;
+      } else if (bassRhythmRng < 0.35 && this.currentDrumPattern && this.currentDrumPattern.kick[2] > 0) { // Follow kick on 'and' of 1
+          bassTargetBeat = 2;
+      } else if (bassRhythmRng < 0.15) { // rare chance for offbeat start
+          bassTargetBeat = 1;
+      }
+
       this.currentBassNote = {
         frequency: bassFrequency,
-        duration: rng() < 0.4 ? 1.8 : 3.8, 
-        velocity: 0.25 + rng() * 0.1, 
+        duration: rng() < 0.4 ? (rng() < 0.5 ? 1.8 : 1.4) : (rng() < 0.5 ? 3.8 : 3.4), // more duration variation
+        velocity: 0.22 + rng() * 0.08, // slightly lower velocity overall
         type: 'sine', 
-        attack: 0.02,   
-        decay: 0.15,    
-        sustain: 0.8,   
-        release: 0.3,   
+        attack: 0.03 + rng() * 0.01,   // Adjusted Attack
+        decay: 0.2 + rng() * 0.05,    // Adjusted Decay
+        sustain: 0.6 + rng() * 0.1,   // Adjusted Sustain
+        release: 0.4 + rng() * 0.1,   // Adjusted Release
         instrument: 'bass',
-        targetBeatInBar: 0, 
+        target16thStep: bassTargetBeat, // Use this to schedule precisely
       };
     }
     // --- End Bass Note Generation ---
 
-    // --- Drum Pattern Generation ---
+    // --- Electric Piano Melody Generation ---
+    this.currentElectricPianoNotes = [];
+    if (this.currentChord && rng() < 0.75) { // Chance to play EP melody this bar
+      const numNotesToPlay = Math.floor(rng() * 3) + 1; // 1-3 notes per bar
+      const availableChordTonesMidi = this.currentChord.absoluteSemitones
+          .map(semi => 60 + semi); // Shift to a suitable MIDI octave range (e.g., C4=60)
+
+      // Filter notes to be within a playable range (e.g., MIDI 55-80 for EP)
+      let potentialEpNotesMidi = this.currentScaleNotes.filter(note => note >= 55 && note <= 80);
+      if (potentialEpNotesMidi.length === 0) potentialEpNotesMidi = availableChordTonesMidi.filter(note => note >=55 && note <= 80);
+      if (potentialEpNotesMidi.length === 0) potentialEpNotesMidi = [60, 64, 67, 71]; // Fallback if no suitable notes
+
+      for (let i = 0; i < numNotesToPlay; i++) {
+        if (potentialEpNotesMidi.length > 0) {
+          const midiNote = potentialEpNotesMidi[Math.floor(rng() * potentialEpNotesMidi.length)];
+          const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
+
+          // Spread notes out, avoid very end
+          const actualTarget16th = (i === 0) ? (rng() < 0.4 ? 0 : (2 + Math.floor(rng()*6))) : ( (this.currentElectricPianoNotes[i-1]?.target16thStep || 0) + 4 + Math.floor(rng()*4) ) % 16;
+
+          if (this.currentElectricPianoNotes.find(n => n.target16thStep === actualTarget16th)) continue; // Avoid collision
+
+          this.currentElectricPianoNotes.push({
+            frequency: freq,
+            duration: (rng() < 0.3 ? 0.4 : 0.8) + rng() * 0.5, // Beat duration for EP notes
+            velocity: 0.12 + rng() * 0.13, // New Velocity: 0.12 - 0.25
+            type: 'sine', // Base type, actual sound from multiple oscs in scheduleNote
+            attack: 0.015 + rng()*0.01,   // New Attack
+            decay: 0.2 + rng()*0.1,    // New Decay
+            sustain: 0.35 + rng()*0.15,   // New Sustain
+            release: 0.3 + rng()*0.1,   // New Release
+            instrument: 'electricPiano',
+            target16thStep: actualTarget16th,
+          });
+        }
+      }
+    }
+    // --- End Electric Piano Melody Generation ---
+
+    // --- Drum Pattern Generation (Lofi Style) ---
     const kickPattern = new Array(16).fill(0);
     const snarePattern = new Array(16).fill(0);
     const hihatPattern = new Array(16).fill(0);
+    const barRng = rng; // Use the bar's seeded random number generator
 
-    kickPattern[0] = 0.9 + rng() * 0.1; 
-    if (rng() < 0.6) kickPattern[8] = 0.8 + rng() * 0.1; 
-    if (rng() < 0.2) kickPattern[6] = 0.6 + rng() * 0.1; 
-    if (rng() < 0.3) kickPattern[12] = 0.7 + rng() * 0.1;
+    // Kick drum (Lofi - sparser, groovier)
+    kickPattern[0] = 0.9 + barRng() * 0.1; // Beat 1 almost always
 
-    snarePattern[4] = 0.85 + rng() * 0.15; 
-    snarePattern[12] = 0.9 + rng() * 0.1;  
-    if (rng() < 0.15) snarePattern[7] = 0.5 + rng() * 0.1; 
-    if (rng() < 0.1) snarePattern[15] = 0.4 + rng() * 0.1; 
+    // Chance for a kick on beat 3, but not always
+    if (barRng() < 0.6) kickPattern[8] = 0.75 + barRng() * 0.1;
 
-    for (let i = 0; i < 16; i += 2) { 
-      if (rng() < 0.85) hihatPattern[i] = 0.4 + rng() * 0.2;
+    // Reduced & sparser syncopation
+    const syncKickRoll = barRng();
+    if (syncKickRoll < 0.20) {
+        kickPattern[6] = 0.6 + barRng() * 0.1;  // 'and' of 2
+    } else if (syncKickRoll < 0.30) {
+        kickPattern[11] = 0.5 + barRng() * 0.1; // 'e' of 3 or 'and' of 3 (less common)
+    } else if (syncKickRoll < 0.38) {
+        kickPattern[3] = 0.55 + barRng() * 0.1; // 'a' of 1 (occasional)
     }
-    if (rng() < 0.4) hihatPattern[3] = 0.3 + rng() * 0.15;
-    if (rng() < 0.3) hihatPattern[7] = 0.3 + rng() * 0.15;
-    if (rng() < 0.5) hihatPattern[10] = 0.35 + rng() * 0.15;
-    if (rng() < 0.2) hihatPattern[13] = 0.25 + rng() * 0.1;
-    
-    if (rng() < 0.3 && hihatPattern[2] > 0) hihatPattern[2] += 0.15;
-    if (rng() < 0.3 && hihatPattern[6] > 0) hihatPattern[6] += 0.15;
-    if (rng() < 0.3 && hihatPattern[10] > 0) hihatPattern[10] += 0.15;
-    if (rng() < 0.3 && hihatPattern[14] > 0) hihatPattern[14] += 0.15;
+    // Removed other more complex kick placements from previous versions.
 
+    // Snare drum (Lofi - clear 2 & 4, very sparse ghosts)
+    snarePattern[4] = 0.8 + barRng() * 0.2;  // Beat 2
+    snarePattern[12] = 0.85 + barRng() * 0.15; // Beat 4
+
+    // Snare ghost notes (reduced probability and impact)
+    const ghostSnareRoll = barRng();
+    if (ghostSnareRoll < 0.12) {
+        snarePattern[7] = 0.1 + barRng() * 0.05; // Ghost note before beat 3
+    } else if (ghostSnareRoll < 0.20) {
+        snarePattern[14] = 0.15 + barRng() * 0.05;  // Softer fill before next bar
+    } else if (ghostSnareRoll < 0.25) {
+        snarePattern[10] = 0.08 + barRng() * 0.05; // Very soft ghost
+    }
+    // Removed some previous ghost note possibilities to make them rarer.
+
+    // Hi-hats (aiming for a slightly swung or busy feel with velocity variations)
+    for (let i = 0; i < 16; i++) {
+      const isDownbeat8th = i % 2 === 0;
+      // const isOffbeat16th = i % 2 !== 0; // Variable not used
+
+      if (isDownbeat8th) { // Potentially stronger, main hats
+        if (barRng() < 0.8) hihatPattern[i] = (0.3 + barRng() * 0.25);
+      } else { // Offbeat 16ths, often softer for swing or fill
+        if (barRng() < 0.55) hihatPattern[i] = (0.15 + barRng() * 0.15); // Reduced probability & max velocity
+      }
+      // Add slight emphasis to main 8th notes if an offbeat 16th is also present before it
+      if (isDownbeat8th && i > 0 && hihatPattern[i-1] > 0 && hihatPattern[i] > 0) {
+          hihatPattern[i] += 0.03; // Reduced accent strength
+      }
+    }
+    // Ensure some main beats have hi-hats if pattern is sparse
+    if (hihatPattern[0] === 0 && barRng() < 0.9) hihatPattern[0] = 0.3 + barRng() * 0.1;
+    if (hihatPattern[4] === 0 && barRng() < 0.7) hihatPattern[4] = 0.25 + barRng() * 0.1;
+    if (hihatPattern[8] === 0 && barRng() < 0.7) hihatPattern[8] = 0.25 + barRng() * 0.1;
+    if (hihatPattern[12] === 0 && barRng() < 0.7) hihatPattern[12] = 0.25 + barRng() * 0.1;
+
+    // Randomly make some hi-hats more open (longer decay) - this is a placeholder for sound change
+    // Actual sound change for open hi-hat would need scheduleDrum modification.
+    // For now, just increase velocity slightly for emphasis.
+    if (barRng() < 0.10 && hihatPattern[14] > 0) hihatPattern[14] += 0.15; // Reduced prob and strength
+    else if (barRng() < 0.08 && hihatPattern[6] > 0) hihatPattern[6] += 0.12; // Further reduced for step 6
+    
     this.currentDrumPattern = {
       kick: kickPattern,
       snare: snarePattern,
@@ -527,29 +670,36 @@ class AudioEngine {
 
   private scheduleDrum(type: 'kick' | 'snare' | 'hihat', time: number, velocity: number): void {
     if (!this.audioContext || velocity === 0) return;
+    const rngNoise = Math.random; // For sound variations, as distinct from seeded rng for patterns
 
     if (type === 'kick') {
       const osc = this.audioContext.createOscillator();
       const gainNode = this.audioContext.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(120, time); 
-      osc.frequency.exponentialRampToValueAtTime(40, time + 0.2); 
+      // osc.frequency.setValueAtTime(120, time);
+      // osc.frequency.exponentialRampToValueAtTime(40, time + 0.2);
+      osc.frequency.setValueAtTime(rngNoise() < 0.5 ? 90 : 100, time);
+      osc.frequency.exponentialRampToValueAtTime(rngNoise() < 0.5 ? 40 : 50, time + (rngNoise() < 0.4 ? 0.15 : 0.2));
 
       gainNode.gain.setValueAtTime(0, time);
-      gainNode.gain.linearRampToValueAtTime(velocity * 1.2, time + 0.01); 
-      gainNode.gain.exponentialRampToValueAtTime(0.001, time + 0.3); 
+      // gainNode.gain.linearRampToValueAtTime(velocity * 1.2, time + 0.01);
+      // gainNode.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+      gainNode.gain.linearRampToValueAtTime(velocity * 1.1, time + 0.01);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, time + 0.25);
+
 
       osc.connect(gainNode);
       gainNode.connect(this.mainGainNode);
       osc.start(time);
-      osc.stop(time + 0.35); 
+      // osc.stop(time + 0.35);
+      osc.stop(time + 0.3); // Slightly shorter stop for potentially tighter sound
     } 
     else if (type === 'snare') {
       const noise = this.audioContext.createBufferSource();
       const bufferSize = this.audioContext.sampleRate * 0.2; 
       const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
       const data = buffer.getChannelData(0);
-      const rngNoise = Math.random; 
+      // const rngNoise = Math.random; // Already defined above
       for (let i = 0; i < bufferSize; i++) {
         data[i] = (rngNoise() * 2 - 1) * 0.6; 
       }
@@ -557,46 +707,59 @@ class AudioEngine {
 
       const noiseFilter = this.audioContext.createBiquadFilter();
       noiseFilter.type = 'bandpass';
-      noiseFilter.frequency.value = 1500 + rngNoise() * 500; 
-      noiseFilter.Q.value = 1.5;
+      // noiseFilter.frequency.value = 1500 + rngNoise() * 500;
+      // noiseFilter.Q.value = 1.5;
+      noiseFilter.frequency.value = 1200 + rngNoise() * 400;
+      noiseFilter.Q.value = 1.2 + rngNoise() * 0.5;
+
 
       const gainNode = this.audioContext.createGain();
       gainNode.gain.setValueAtTime(0, time);
       gainNode.gain.linearRampToValueAtTime(velocity, time + 0.005); 
-      gainNode.gain.exponentialRampToValueAtTime(0.001, time + 0.15); 
+      // gainNode.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, time + (0.1 + rngNoise() * 0.03));
+
 
       noise.connect(noiseFilter);
       noiseFilter.connect(gainNode);
       gainNode.connect(this.mainGainNode);
       noise.start(time);
-      noise.stop(time + 0.2);
+      // noise.stop(time + 0.2);
+      noise.stop(time + 0.15); // Slightly shorter stop
     } 
     else if (type === 'hihat') {
       const noise = this.audioContext.createBufferSource();
       const bufferSize = this.audioContext.sampleRate * 0.1; 
       const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
       const data = buffer.getChannelData(0);
-      const rngNoise = Math.random;
+      // const rngNoise = Math.random; // Already defined above
       for (let i = 0; i < bufferSize; i++) {
         data[i] = (rngNoise() * 2 - 1) * 0.4;
       }
       noise.buffer = buffer;
 
       const noiseFilter = this.audioContext.createBiquadFilter();
-      noiseFilter.type = 'highpass';
-      noiseFilter.frequency.value = 7000; 
-      noiseFilter.Q.value = 0.5;
+      // noiseFilter.type = 'highpass';
+      // noiseFilter.frequency.value = 7000;
+      // noiseFilter.Q.value = 0.5;
+      noiseFilter.type = 'bandpass';
+      noiseFilter.frequency.value = 7000 + rngNoise() * 2000;
+      noiseFilter.Q.value = 0.8 + rngNoise() * 0.4;
       
       const gainNode = this.audioContext.createGain();
       gainNode.gain.setValueAtTime(0, time);
-      gainNode.gain.linearRampToValueAtTime(velocity * 0.8, time + 0.002); 
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, time + 0.05); 
+      // gainNode.gain.linearRampToValueAtTime(velocity * 0.8, time + 0.002);
+      // gainNode.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+      gainNode.gain.linearRampToValueAtTime(velocity * 0.7, time + 0.002);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, time + (0.025 + rngNoise() * 0.01));
+
 
       noise.connect(noiseFilter);
       noiseFilter.connect(gainNode);
       gainNode.connect(this.mainGainNode);
       noise.start(time);
-      noise.stop(time + 0.1);
+      // noise.stop(time + 0.1);
+      noise.stop(time + 0.05); // Significantly shorter
     }
   }
 
@@ -619,22 +782,23 @@ class AudioEngine {
     noteGain.gain.setValueAtTime(noteVelocity * actualSustainLevel, sustainPhaseEndTime);
     noteGain.gain.linearRampToValueAtTime(0, sustainPhaseEndTime + actualRelease);
     noteGain.connect(this.mainGainNode);
+    const localRng = Math.random; // For sound variations within scheduleNote
 
     if (note.instrument === 'pad') {
       const osc1 = this.audioContext.createOscillator();
-      osc1.type = note.type as OscillatorType || 'triangle';
+      osc1.type = 'sine'; // Changed type
       osc1.frequency.setValueAtTime(note.frequency, time);
-      osc1.detune.setValueAtTime(-5, time); 
+      osc1.detune.setValueAtTime(-3, time); // Adjusted detune
 
       const osc2 = this.audioContext.createOscillator();
-      osc2.type = note.type as OscillatorType || 'triangle';
+      osc2.type = 'sine'; // Changed type
       osc2.frequency.setValueAtTime(note.frequency, time);
-      osc2.detune.setValueAtTime(5, time);
+      osc2.detune.setValueAtTime(3, time); // Adjusted detune
 
       const padFilter = this.audioContext.createBiquadFilter();
       padFilter.type = 'lowpass';
-      padFilter.frequency.setValueAtTime(800 + noteVelocity * 400, time); 
-      padFilter.Q.value = 0.7;
+      padFilter.frequency.setValueAtTime(500 + noteVelocity * 250, time); // Adjusted filter
+      padFilter.Q.value = 0.6; // Adjusted Q
 
       osc1.connect(padFilter);
       osc2.connect(padFilter);
@@ -651,14 +815,47 @@ class AudioEngine {
 
       const bassFilter = this.audioContext.createBiquadFilter();
       bassFilter.type = 'lowpass';
-      bassFilter.frequency.setValueAtTime(600, time); 
-      bassFilter.Q.value = 1;
+      bassFilter.frequency.setValueAtTime(350 + noteVelocity * 150, time); // Adjusted filter
+      bassFilter.Q.value = 0.9; // Adjusted Q
 
       osc.connect(bassFilter);
       bassFilter.connect(noteGain);
 
       osc.start(time);
       osc.stop(sustainPhaseEndTime + actualRelease + 0.1); 
+    } else if (note.instrument === 'electricPiano') {
+      const osc1 = this.audioContext.createOscillator();
+      osc1.type = 'sine'; // Base tone
+      osc1.frequency.setValueAtTime(note.frequency, time);
+      // osc1.detune.setValueAtTime(-2, time); // Optional slight detune
+
+      const osc2 = this.audioContext.createOscillator();
+      osc2.type = 'triangle'; // Changed back to triangle
+      osc2.frequency.setValueAtTime(note.frequency, time); // Unison
+      osc2.detune.setValueAtTime((localRng() * 12 - 6), time); // Retain detune logic
+
+      const epGain = this.audioContext.createGain();
+      epGain.gain.value = 0.8;
+
+      const osc2Gain = this.audioContext.createGain(); // New gain for osc2
+      osc2Gain.gain.value = 0.35; // Mix triangle lower
+
+      osc2.connect(osc2Gain);
+      osc2Gain.connect(epGain);
+      osc1.connect(epGain); // osc1 connects directly to epGain
+
+      const epFilter = this.audioContext.createBiquadFilter();
+      epFilter.type = 'lowpass';
+      epFilter.frequency.setValueAtTime(450 + (note.velocity || 0.2) * 700, time); // Adjusted filter frequency
+      epFilter.Q.value = 0.6; // Fixed Q
+
+      epGain.connect(epFilter); // epGain (with mixed oscs) connects to filter
+      epFilter.connect(noteGain); // noteGain is the main ADSR envelope gain
+
+      osc1.start(time);
+      osc2.start(time);
+      osc1.stop(sustainPhaseEndTime + actualRelease + 0.1);
+      osc2.stop(sustainPhaseEndTime + actualRelease + 0.1);
     } else if (note.instrument === 'atmosphere') {
       const osc = this.audioContext.createOscillator();
       osc.type = (note.type as OscillatorType) || 'triangle'; 
@@ -700,9 +897,13 @@ class AudioEngine {
         this.scheduleNote(note, time); 
       });
 
-      if (this.currentBassNote) {
-        this.scheduleNote(this.currentBassNote, time);
+      // if (this.currentBassNote) {
+      //   this.scheduleNote(this.currentBassNote, time);
+      // }
+      if (this.currentBassNote && this.currentBassNote.target16thStep === current16th) {
+            this.scheduleNote(this.currentBassNote, time);
       }
+
       if (this.currentAtmosphereNote && (this.currentAtmosphereNote as any).isNew) {
         this.scheduleNote(this.currentAtmosphereNote, time);
         delete (this.currentAtmosphereNote as any).isNew; 
@@ -719,6 +920,12 @@ class AudioEngine {
          const hihatVel = this.currentDrumPattern.hihat[current16th];
          if (hihatVel > 0) this.scheduleDrum('hihat', time, hihatVel);
     }
+    // Schedule Electric Piano Notes
+    this.currentElectricPianoNotes.forEach(note => {
+      if (note.target16thStep === current16th) {
+        this.scheduleNote(note, time);
+      }
+    });
   }
 
   private advanceNote(): void {
