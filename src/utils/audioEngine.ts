@@ -553,49 +553,125 @@ class AudioEngine {
   }
 
   // Determines chord type (maj7, min7, dom7) based on its function in the scale
-  private getChordQualityAndVoicing(scaleDegree: number, scale: number[], rng: () => number): number[] {
-    // This is a simplified diatonic chord function mapping for major-like scales
-    // scaleDegree is 0-6
-    // I, IV are typically Major
-    // ii, iii, vi are typically minor
-    // V is typically Dominant
-    // vii° is diminished (not used much in lofi, often subbed or avoided)
+  private getChordQualityAndVoicing(scaleDegree: number, currentKeyScaleIntervals: number[], rng: () => number): number[] {
+    // currentKeyScaleIntervals are the semitone intervals defining the current key/mode from its root (e.g., [0,2,4,5,7,9,11] for major)
+    // scaleDegree is the 0-indexed degree of the chord in that scale (e.g., 0 for 'i', 1 for 'ii')
 
-    let quality: 'maj' | 'min' | 'dom' = 'maj';
-    if ([0, 3].includes(scaleDegree)) { // I, IV
-      quality = 'maj';
-    } else if ([1, 2, 5].includes(scaleDegree)) { // ii, iii, vi
-      quality = 'min';
-    } else if (scaleDegree === 4) { // V
-      quality = 'dom';
-    } else { // vii° or other modal chords - default to minor for smoother lofi
-      quality = 'min';
+    const numScaleNotes = currentKeyScaleIntervals.length;
+    if (numScaleNotes === 0) { // Should not happen
+        console.warn("Empty scale passed to getChordQualityAndVoicing");
+        return AudioEngine.chordVoicings.triadMaj; // Fallback
     }
 
-    const preferSimpleVoicings = rng() < 0.3; // 30% chance to lean towards simpler voicings overall for this chord
+    // Helper to get a scale interval from the key root, handling octave for calculation
+    const getIntervalFromKeyRoot = (degree: number): number => {
+        return currentKeyScaleIntervals[degree % numScaleNotes];
+    };
 
-    if (quality === 'maj') {
-      if (preferSimpleVoicings) {
-        const choices = [AudioEngine.chordVoicings.triadMaj, AudioEngine.chordVoicings.maj6, AudioEngine.chordVoicings.add9, AudioEngine.chordVoicings.maj7no5];
-        return choices[Math.floor(rng() * choices.length)];
-      }
-      const choices = [AudioEngine.chordVoicings.maj7, AudioEngine.chordVoicings.maj9, AudioEngine.chordVoicings.maj6, AudioEngine.chordVoicings.add9];
-      return choices[Math.floor(rng() * choices.length)];
+    // Helper to calculate interval from chord root to another scale tone forming the chord
+    const getIntervalFromChordRoot = (targetDegreeOffset: number): number => {
+        const chordRootNoteInScale = getIntervalFromKeyRoot(scaleDegree);
+        const targetNoteInScale = getIntervalFromKeyRoot(scaleDegree + targetDegreeOffset);
+
+        let interval = targetNoteInScale - chordRootNoteInScale;
+        while (interval < 0) {
+            interval += 12;
+        }
+        return interval % 12;
+    };
+
+    const thirdInterval = getIntervalFromChordRoot(2);
+    const fifthInterval = getIntervalFromChordRoot(4);
+    const seventhInterval = getIntervalFromChordRoot(6);
+
+    let quality: 'maj' | 'min' | 'dom' | 'dim' | 'aug' | 'other' = 'other';
+    let chosenVoicing: number[];
+
+    if (thirdInterval === 4) {
+        if (fifthInterval === 7) quality = 'maj';
+        else if (fifthInterval === 8) quality = 'aug';
+        else if (fifthInterval === 6) quality = 'other'; // Could be maj b5
+        else quality = 'maj'; // Default to major if fifth is unusual but third is major
+    } else if (thirdInterval === 3) {
+        if (fifthInterval === 7) quality = 'min';
+        else if (fifthInterval === 6) quality = 'dim';
+        else quality = 'min'; // Default to minor if fifth is unusual but third is minor
+    } else {
+        // This case handles sus chords or other non-standard triadic structures based on scale steps
+        // For lofi, defaulting to a minor or major triad based on context or a sus4 if applicable
+        if (thirdInterval === 5 && fifthInterval === 7) { // Check for sus4 (0, 5, 7)
+             if (AudioEngine.chordVoicings.sus4) { // Check if sus4 voicing exists
+                chosenVoicing = AudioEngine.chordVoicings.sus4;
+                // If it's also a dom7sus4, that will be handled by 'dom' quality check if seventh is 10
+                if (seventhInterval === 10 && AudioEngine.chordVoicings.dom7sus4) {
+                     quality = 'dom'; // Reclassify for dom7sus4 specific voicing
+                } else {
+                    return chosenVoicing; // Return sus4 triad early if no dominant 7th
+                }
+             } else { // Fallback if sus4 not defined
+                quality = 'min'; // Fallback for ambiguous thirds (e.g. sus or gapped scales)
+             }
+        } else {
+            quality = 'min'; // Fallback for other ambiguous thirds
+        }
     }
-    if (quality === 'min') {
-      if (preferSimpleVoicings) {
-        const choices = [AudioEngine.chordVoicings.triadMin, AudioEngine.chordVoicings.min6, AudioEngine.chordVoicings.minAdd9, AudioEngine.chordVoicings.min7no5];
-        return choices[Math.floor(rng() * choices.length)];
-      }
-      const choices = [AudioEngine.chordVoicings.min7, AudioEngine.chordVoicings.min9, AudioEngine.chordVoicings.min6, AudioEngine.chordVoicings.minAdd9];
-      return choices[Math.floor(rng() * choices.length)];
+
+    // Refine quality based on seventh, especially for dominant
+    if (quality === 'maj' && seventhInterval === 10) { // Major triad with a minor 7th = Dominant
+        quality = 'dom';
     }
-    if (quality === 'dom') {
-      const choices = [AudioEngine.chordVoicings.dom7, AudioEngine.chordVoicings.dom9, AudioEngine.chordVoicings.dom7sus4];
-      return choices[Math.floor(rng() * choices.length)];
+
+    const preferSimpleVoicings = rng() < 0.3;
+
+    switch (quality) {
+        case 'maj':
+            chosenVoicing = preferSimpleVoicings
+                ? (rng() < 0.6 ? AudioEngine.chordVoicings.triadMaj : (AudioEngine.chordVoicings.maj6 || AudioEngine.chordVoicings.triadMaj))
+                : (rng() < 0.6 ? (AudioEngine.chordVoicings.maj7 || AudioEngine.chordVoicings.triadMaj) : (AudioEngine.chordVoicings.maj9 || AudioEngine.chordVoicings.maj7 || AudioEngine.chordVoicings.triadMaj));
+            // Ensure specific maj7 if the interval is indeed a major 7th (11 semitones)
+            if (seventhInterval === 11 && !preferSimpleVoicings && AudioEngine.chordVoicings.maj7) chosenVoicing = AudioEngine.chordVoicings.maj7;
+            break;
+        case 'min':
+            chosenVoicing = preferSimpleVoicings
+                ? (rng() < 0.6 ? AudioEngine.chordVoicings.triadMin : (AudioEngine.chordVoicings.min6 || AudioEngine.chordVoicings.triadMin))
+                : (rng() < 0.6 ? (AudioEngine.chordVoicings.min7 || AudioEngine.chordVoicings.triadMin) : (AudioEngine.chordVoicings.min9 || AudioEngine.chordVoicings.min7 || AudioEngine.chordVoicings.triadMin));
+            // Check for minMaj7 if such a voicing exists and interval is major 7th (11 semitones)
+            if (seventhInterval === 11 && !preferSimpleVoicings && (AudioEngine.chordVoicings as any).minMaj7) chosenVoicing = (AudioEngine.chordVoicings as any).minMaj7;
+            else if (seventhInterval === 10 && !preferSimpleVoicings && AudioEngine.chordVoicings.min7) chosenVoicing = AudioEngine.chordVoicings.min7; // Ensure min7 if interval is minor 7th
+            break;
+        case 'dom':
+             // Check for dom7sus4 first if the third interval was ambiguous (e.g. 5 for sus4)
+            if (thirdInterval === 5 && fifthInterval === 7 && seventhInterval === 10 && AudioEngine.chordVoicings.dom7sus4) {
+                chosenVoicing = AudioEngine.chordVoicings.dom7sus4;
+            } else {
+                chosenVoicing = rng() < 0.6 ? (AudioEngine.chordVoicings.dom7 || AudioEngine.chordVoicings.triadMaj) : (AudioEngine.chordVoicings.dom9 || AudioEngine.chordVoicings.dom7 || AudioEngine.chordVoicings.triadMaj);
+            }
+            break;
+        case 'dim':
+            chosenVoicing = preferSimpleVoicings ? [0, 3, 6] : ([0, 3, 6, 10]); // Default to triad or m7b5
+            // Check for fully diminished 7th if such a voicing exists and interval is diminished 7th (9 semitones)
+            if (seventhInterval === 9 && (AudioEngine.chordVoicings as any).dim7) chosenVoicing = (AudioEngine.chordVoicings as any).dim7;
+            else if (seventhInterval === 10) chosenVoicing = [0,3,6,10]; // Ensure m7b5 if minor 7th over diminished triad
+            break;
+        case 'aug':
+            chosenVoicing = preferSimpleVoicings ? [0, 4, 8] : (rng() < 0.5 ? [0,4,8,10] : [0,4,8,11]); // Default to augmented triad or some 7th form
+            // Could add specific checks for AugMaj7 or AugDom7 if voicings exist
+            break;
+        default: // 'other' or unhandled
+            // Fallback to basic triad based on calculated third, or minor if very ambiguous
+            if (thirdInterval === 4) chosenVoicing = AudioEngine.chordVoicings.triadMaj;
+            else if (thirdInterval === 3) chosenVoicing = AudioEngine.chordVoicings.triadMin;
+            else if (thirdInterval === 5 && fifthInterval === 7 && AudioEngine.chordVoicings.sus4) chosenVoicing = AudioEngine.chordVoicings.sus4;
+            else chosenVoicing = AudioEngine.chordVoicings.triadMin;
+            break;
     }
     
-    return AudioEngine.chordVoicings.maj7; // Fallback if quality is somehow not caught
+    // Ensure all voicings exist or provide ultimate fallbacks
+     if (!chosenVoicing && quality === 'dim') chosenVoicing = [0,3,6,10];
+     if (!chosenVoicing && quality === 'aug') chosenVoicing = [0,4,8];
+     if (!chosenVoicing) chosenVoicing = AudioEngine.chordVoicings.triadMaj;
+
+    return chosenVoicing;
   }
 
   private getNotesInScale(rootNoteFrequency: number, scaleIntervals: number[], numOctavesToCover: number = 4): number[] {
@@ -752,14 +828,14 @@ class AudioEngine {
     // const baseOctaveArp = rng() < 0.5 ? 0 : 1; // This variable is not used anymore.
 
     // --- Pad ---
-    let padTargetFrequencies = this.currentChord.intervals.map(interval =>
+    let padTargetFrequencies = this.currentChord!.intervals.map(interval =>
       this.currentChord!.rootFreq * semitoneToRatio(interval + (baseOctavePad * 12))
     );
     // Apply voice leading
     const ledPadFrequencies = this.voiceLeadPads(padTargetFrequencies, this.prevPadFrequencies);
     this.currentPadNotes = ledPadFrequencies.map((freq, index) => ({
         frequency: freq,
-        duration: 3.8, // Held for nearly the whole bar
+        duration: 3.8,
         velocity: 0.1 + rng() * 0.05, // Softer
         type: 'triangle',
         attack: 1.5 + rng() * 1.0, // Slow attack
