@@ -14,6 +14,8 @@ type Note = {
   // For melody/arp scheduling:
   targetBeatInBar?: number; // Which quarter beat (0-3) or 16th step (0-15) this note should play on
   arpIndex?: number; // Index in the arpeggio sequence
+  /** Pre-computed 16th-step position for precise scheduling (0-15) */
+  target16thStep?: number;
 };
 
 type DrumPattern = {
@@ -42,6 +44,8 @@ class AudioEngine {
   private delayFilterNode: BiquadFilterNode;
   private dryGain: GainNode;
   private wetGain: GainNode;
+  /** Send path for global reverb (parallel to delay) */
+  private reverbSendGain: GainNode;
 
   private intervalId: number | null = null;
   private currentVolume: number = 0.35; // Adjusted default volume
@@ -52,6 +56,7 @@ class AudioEngine {
   private progressionTemplate: number[] = [];
   private progressionIndex: number = 0;
   private currentScaleDegree: number = 0;
+  private currentScaleNotes: number[] = [];
 
   private barCount: number = 0;
 
@@ -124,6 +129,7 @@ class AudioEngine {
     this.mainGainNode = audioContext.createGain();
     this.mainGainNode.gain.value = this.currentVolume;
 
+    // Initialize all nodes first
     this.lowpassFilter = audioContext.createBiquadFilter();
     this.lowpassFilter.type = "lowpass";
     this.lowpassFilter.frequency.value = 3500;
@@ -131,20 +137,27 @@ class AudioEngine {
 
     this.dryGain = audioContext.createGain();
     this.wetGain = audioContext.createGain();
+    this.reverbSendGain = audioContext.createGain(); // Initialize early
     this.dryGain.gain.value = 0.65;
     this.wetGain.gain.value = 0.35;
+    this.reverbSendGain.gain.value = 0.5;
 
     this.delayNode = audioContext.createDelay(2.0);
     this.feedbackNode = audioContext.createGain();
     this.delayFilterNode = audioContext.createBiquadFilter();
     this.delayFilterNode.type = 'lowpass';
-    this.delayFilterNode.frequency.value = 1200; // Darker tape-style echoes
+    this.delayFilterNode.frequency.value = 1200;
     this.delayFilterNode.Q.value = 0.5;
 
+    // Set up initial echo parameters
+    this.feedbackNode.gain.value = 0.35;
+    this.delayNode.delayTime.value = (60 / this.bpm) * 0.5;
+
+    // Now connect everything
     this.mainGainNode.connect(this.lowpassFilter);
+    this.lowpassFilter.connect(this.reverbSendGain);
     this.lowpassFilter.connect(this.dryGain);
     this.dryGain.connect(audioContext.destination);
-
     this.lowpassFilter.connect(this.delayNode);
     this.delayNode.connect(this.delayFilterNode);
     this.delayFilterNode.connect(this.feedbackNode);
@@ -153,9 +166,11 @@ class AudioEngine {
     this.createReverb().then(() => {
       if (this.reverbNode) {
         this.delayFilterNode.connect(this.reverbNode);
+        this.reverbSendGain.connect(this.reverbNode);
         this.reverbNode.connect(this.wetGain);
       } else {
         this.delayFilterNode.connect(this.wetGain);
+        this.reverbSendGain.connect(this.wetGain);
       }
       this.wetGain.connect(audioContext.destination);
     });
@@ -417,67 +432,123 @@ class AudioEngine {
   }
 
   private scheduleDrum(type: 'kick' | 'snare' | 'hihat', time: number, velocity: number = 1): void {
-    // (Drum scheduling logic remains largely the same as your provided good version)
-    // For brevity, assuming it's similar to the previous good one.
-    // Just ensure they connect to `this.mainGainNode` if they should go through master effects,
-    // or `audioContext.destination` if they should bypass (like vinyl crackle often does).
-    // Let's make drums go through main effects for now for cohesion.
-    let drumGainOutputNode: AudioNode = this.mainGainNode;
-
+    const drumGainOutputNode: AudioNode = this.mainGainNode;
+    const rng = this.seededRandom(this.barCount + this.current16thStepInBar);
+    
     if (type === 'kick') {
+      // Hard-hitting kick with strong attack
       const osc = audioContext.createOscillator();
       const gain = audioContext.createGain();
-      osc.frequency.setValueAtTime(120, time);
-      osc.frequency.exponentialRampToValueAtTime(40, time + 0.12);
+      
       osc.type = 'sine';
-      gain.gain.setValueAtTime(0.9 * velocity, time); // Slightly punchier
-      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4);
-      osc.connect(gain);
-      gain.connect(drumGainOutputNode);
+      osc.frequency.setValueAtTime(120, time);
+      osc.frequency.exponentialRampToValueAtTime(40, time + 0.4);
+      
+      gain.gain.setValueAtTime(1.5 * velocity, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+      
+      // Add click at the start
+      const click = audioContext.createBufferSource();
+      const clickBuffer = audioContext.createBuffer(1, 1024, audioContext.sampleRate);
+      const clickData = clickBuffer.getChannelData(0);
+      for (let i = 0; i < clickData.length; i++) {
+        clickData[i] = (Math.random() * 2 - 1) * 0.5;
+      }
+      
+      click.buffer = clickBuffer;
+      const clickGain = audioContext.createGain();
+      clickGain.gain.setValueAtTime(0.8 * velocity, time);
+      clickGain.gain.exponentialRampToValueAtTime(0.001, time + 0.01);
+      
+      osc.connect(gain).connect(drumGainOutputNode);
+      click.connect(clickGain).connect(drumGainOutputNode);
+      
       osc.start(time);
+      click.start(time);
       osc.stop(time + 0.4);
-
-      // Sidechain ducking for rest of mix
-      this.mainGainNode.gain.cancelScheduledValues(time);
-      this.mainGainNode.gain.setValueAtTime(this.currentVolume * 0.65, time);
-      this.mainGainNode.gain.linearRampToValueAtTime(this.currentVolume, time + 0.3);
+      
     } else if (type === 'snare') {
-      const noiseDuration = 0.15;
+      // Snappy snare with noise burst
+      const noiseDuration = 0.2;
       const noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * noiseDuration, audioContext.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      const rng = this.seededRandom(this.barCount + this.current16thStepInBar + 10)
-      for (let i = 0; i < output.length; i++) output[i] = (rng() * 2 - 1);
-
+      const noiseData = noiseBuffer.getChannelData(0);
+      
+      // Generate noise with strong transient
+      for (let i = 0; i < noiseData.length; i++) {
+        const fade = 1 - (i / noiseData.length);
+        noiseData[i] = (Math.random() * 2 - 1) * fade * 0.8;
+      }
+      
       const noise = audioContext.createBufferSource();
       noise.buffer = noiseBuffer;
+      
+      // Noise envelope - very fast attack
+      const noiseGain = audioContext.createGain();
+      noiseGain.gain.setValueAtTime(0, time);
+      noiseGain.gain.linearRampToValueAtTime(1.2 * velocity, time + 0.002);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, time + noiseDuration);
+      
+      // Noise filter - sharp bandpass
       const noiseFilter = audioContext.createBiquadFilter();
       noiseFilter.type = 'bandpass';
-      noiseFilter.frequency.value = 1400; // Adjusted for lofi
-      noiseFilter.Q.value = 10; // Sharper Q for snare body
-      const gain = audioContext.createGain();
-      gain.gain.setValueAtTime(0.6 * velocity, time);
-      gain.gain.exponentialRampToValueAtTime(0.01 * velocity, time + noiseDuration * 1.5);
-
-      noise.connect(noiseFilter);
-      noiseFilter.connect(gain);
-      gain.connect(drumGainOutputNode);
+      noiseFilter.frequency.value = 1000 + rng() * 1000;
+      noiseFilter.Q.value = 2.0;
+      
+      // Body tone
+      const bodyOsc = audioContext.createOscillator();
+      const bodyGain = audioContext.createGain();
+      bodyOsc.type = 'triangle';
+      bodyOsc.frequency.value = 180 + rng() * 60;
+      bodyGain.gain.setValueAtTime(0.8 * velocity, time);
+      bodyGain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+      
+      noise.connect(noiseFilter).connect(noiseGain).connect(drumGainOutputNode);
+      bodyOsc.connect(bodyGain).connect(drumGainOutputNode);
+      
       noise.start(time);
+      bodyOsc.start(time);
+      noise.stop(time + noiseDuration);
+      bodyOsc.stop(time + 0.1);
+      
     } else if (type === 'hihat') {
-      const osc = audioContext.createOscillator();
+      // Sharp hi-hat with strong transient
+      const noiseDuration = 0.08;
+      const noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * noiseDuration, audioContext.sampleRate);
+      const noiseData = noiseBuffer.getChannelData(0);
+      
+      // Generate noise with strong initial transient
+      for (let i = 0; i < noiseData.length; i++) {
+        noiseData[i] = (Math.random() * 2 - 1) * Math.max(0, 1 - (i / (noiseData.length * 0.5)));
+      }
+      
+      const noise = audioContext.createBufferSource();
+      noise.buffer = noiseBuffer;
+      
+      // Very fast envelope
       const gain = audioContext.createGain();
-      const hpf = audioContext.createBiquadFilter();
-      osc.type = 'square'; // Gives a bit more body for filtering
-      osc.frequency.value = 350 + this.seededRandom(this.barCount + this.current16thStepInBar + 20)() * 100 ; // Slight variation
-      hpf.type = 'highpass';
-      hpf.frequency.value = 6000;
-      hpf.Q.value = 0.5;
-      gain.gain.setValueAtTime(0.07 * velocity, time); // Generally quiet
-      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05 + this.seededRandom(this.barCount + this.current16thStepInBar + 30)() * 0.03); // Varied decay
-      osc.connect(hpf);
-      hpf.connect(gain);
-      gain.connect(drumGainOutputNode);
-      osc.start(time);
-      osc.stop(time + 0.1);
+      gain.gain.setValueAtTime(1.0 * velocity, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + noiseDuration * 0.8);
+      
+      // Aggressive high-pass filtering
+      const filter = audioContext.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 6000;
+      filter.Q.value = 0.7;
+      
+      // Boost presence
+      const presence = audioContext.createBiquadFilter();
+      presence.type = 'peaking';
+      presence.frequency.value = 8000;
+      presence.gain.value = 12.0;
+      presence.Q.value = 1.0;
+      
+      noise.connect(filter)
+             .connect(presence)
+             .connect(gain)
+             .connect(drumGainOutputNode);
+      
+      noise.start(time);
+      noise.stop(time + noiseDuration);
     }
   }
 
@@ -527,6 +598,35 @@ class AudioEngine {
     return AudioEngine.chordVoicings.maj7; // Fallback if quality is somehow not caught
   }
 
+  private getNotesInScale(rootNoteFrequency: number, scaleIntervals: number[], numOctavesToCover: number = 4): number[] {
+    const notes = new Set<number>();
+    const minMidiNote = 24; // C1
+    const maxMidiNote = 96; // C7
+
+    // Convert root frequency to MIDI note
+    // MIDI note A4 (69) is 440 Hz.
+    // formula: midi = 69 + 12 * log2(freq/440)
+    const rootMidi = 69 + 12 * Math.log2(rootNoteFrequency / 440);
+
+    // Iterate octaves around the rootMidi to ensure coverage
+    for (let octaveOffset = -Math.floor(numOctavesToCover / 2); octaveOffset <= Math.ceil(numOctavesToCover / 2); octaveOffset++) {
+      for (const interval of scaleIntervals) {
+        const note = Math.round(rootMidi + interval + (12 * octaveOffset)); // Round to nearest MIDI note
+        if (note >= minMidiNote && note <= maxMidiNote) {
+          notes.add(note);
+        }
+      }
+    }
+    // Ensure the direct root octave notes are included
+    for (const interval of scaleIntervals) {
+        const noteInRootOctave = Math.round(rootMidi + interval);
+        if (noteInRootOctave >= minMidiNote && noteInRootOctave <= maxMidiNote) {
+            notes.add(noteInRootOctave);
+        }
+    }
+    return Array.from(notes).sort((a, b) => a - b);
+  }
+
   public generateNewPatterns(): void {
     const rngSeed = this.currentSeed;
     const baseRng = this.seededRandom(rngSeed);
@@ -552,6 +652,7 @@ class AudioEngine {
       { name: 'Pentatonic Minor', intervals: [0, 3, 5, 7, 10] }
     ];
     this.scale = scales[Math.floor(baseRng() * scales.length)].intervals;
+    this.currentScaleNotes = this.getNotesInScale(this.keyRootFreq, this.scale);
     
     this.progressionTemplate = AudioEngine.progressionTemplates[Math.floor(baseRng() * AudioEngine.progressionTemplates.length)];
     this.progressionIndex = 0;
@@ -617,7 +718,6 @@ class AudioEngine {
     return ledFreqs.sort((a, b) => a - b); // Keep them sorted for consistency
 }
 
-
   private generateNextBar(rng: () => number) {
     // --- Chord Progression ---
     if (this.barCount > 0) { // Don't advance progression for the very first bar (already set in generateNewPatterns)
@@ -655,7 +755,6 @@ class AudioEngine {
     }));
     this.prevPadFrequencies = [...ledPadFrequencies];
 
-
     // --- Bass ---
     const bassRootFreq = this.currentChord.rootFreq * (rng() < 0.7 ? 0.5 : 0.25); // 1 or 2 octaves below chord root
     this.currentBassNote = {
@@ -667,15 +766,17 @@ class AudioEngine {
       instrument: 'bass',
     };
 
-    // --- Lead Melody (simple chord tone sequence) ---
+    // --- Lead Melody (uses currentScaleNotes) ---
     this.currentLeadMelodyNotes = [];
     const numMelodyNotes = 1 + Math.floor(rng() * 3); // 1-3 notes in the bar
-    const availableChordTones = this.currentChord.intervals;
-    if (availableChordTones.length > 0) {
+    // Filter scale notes for a typical lead range (e.g., C4 to C6, MIDI 60-84)
+    const availableLeadNotes = this.currentScaleNotes.filter(noteMidi => noteMidi >= 60 && noteMidi <= 84);
+
+    if (availableLeadNotes.length > 0) {
         for (let i = 0; i < numMelodyNotes; i++) {
-            const chordToneIndex = Math.floor(rng() * availableChordTones.length);
-            const interval = availableChordTones[chordToneIndex];
-            const noteFreq = this.currentChord.rootFreq * semitoneToRatio(interval + (baseOctaveLead * 12) + (rng() < 0.2 ? 12 : 0)); // Chance for higher octave
+            const noteMidi = availableLeadNotes[Math.floor(rng() * availableLeadNotes.length)];
+            // Convert MIDI note to frequency. A4 (MIDI 69) is 440Hz.
+            const noteFreq = 440 * Math.pow(2, (noteMidi - 69) / 12);
             
             this.currentLeadMelodyNotes.push({
                 frequency: noteFreq,
@@ -690,35 +791,44 @@ class AudioEngine {
         // Ensure unique target beats for melody notes if multiple
         const uniqueBeats = new Set<number>();
         this.currentLeadMelodyNotes = this.currentLeadMelodyNotes.filter(note => {
-            if (uniqueBeats.has(note.targetBeatInBar!)) return false;
-            uniqueBeats.add(note.targetBeatInBar!);
+            if (note.targetBeatInBar === undefined) return false; // Should not happen with current logic
+            if (uniqueBeats.has(note.targetBeatInBar)) return false;
+            uniqueBeats.add(note.targetBeatInBar);
             return true;
         });
     }
-
 
     // --- Arpeggiator ---
     this.currentArpNotes = [];
     const arpChordTones = this.currentChord.intervals; // Use the base voicing intervals
     if (arpChordTones.length > 0) {
         const arpPatternLength = rng() < 0.5 ? 4 : 8; // 4 or 8 arp notes per bar
-        const arpOctave = baseOctaveArp;
+        const chordNotesInScale = this.currentChord.absoluteSemitones.map(semi => this.keyRootFreq * semitoneToRatio(semi)).filter(cn => this.currentScaleNotes.includes(Math.round(cn)));
+        let noteSource = chordNotesInScale.length > 0 ? chordNotesInScale : this.currentScaleNotes.filter(n => n >= 55 && n <= 84); // MIDI C3-A#5 range for arp
+        if (noteSource.length === 0) noteSource = this.currentScaleNotes.filter(n => n >= 48 && n <= 72); // Fallback to C3-C5 if primary range empty
+        // If still no notes, arp will be silent for this bar.
+        if (noteSource.length > 0) { // Only proceed if we have notes for the arp
+
+        const arpBase = noteSource[Math.floor(rng() * noteSource.length)];
+        const octaveJump = (rng() > 0.7 ? 12 : 0);
+        const octaveDirection = (rng() > 0.5 ? 1 : (rng() > 0.3 ? -1 : 0));
+        const octaveOffset = octaveJump * octaveDirection;
+        let note = arpBase + octaveOffset;
+        note = Math.min(84, Math.max(48, note)); // Constrain C3-C6
+        
         for (let i = 0; i < arpPatternLength; i++) {
-            const toneIndex = i % arpChordTones.length; // Cycle through chord tones
-            // Could add patterns like up/down, random etc. For now, simple cycle.
-            const interval = arpChordTones[toneIndex];
             this.currentArpNotes.push({
-                frequency: this.currentChord.rootFreq * semitoneToRatio(interval + (arpOctave * 12)),
-                duration: 0.4, // 16th note length (total incl. release) if arp is 16ths
-                velocity: 0.08 + rng() * 0.04, // Soft
+                frequency: note,
+                duration: 0.4, // 16th note length (total incl. release)
+                velocity: 0.08 + rng() * 0.04,
                 type: 'sine',
                 attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.15,
                 instrument: 'arp',
-                arpIndex: i, // Its position in the arp sequence for scheduling
-                targetBeatInBar: i * (16 / arpPatternLength) // Distribute over 16th steps
+                target16thStep: Math.floor(i * (16 / arpPatternLength))
             });
-        }
-    }
+        } // Closes for loop
+      } // Closes: if (noteSource.length > 0)
+    } // Closes: if (arpChordTones.length > 0)
 
     // --- Electric Piano ---
     this.currentElectricPianoNotes = [];
@@ -731,12 +841,35 @@ class AudioEngine {
         }
 
         epBeats.forEach(beat => {
-            // Select 3–5 chord tones for the EP voicing
-            const chordIntervalsForEP = this.currentChord!.intervals.slice(0, rng() < 0.6 ? 3 : this.currentChord!.intervals.length);
-            const epOctaveShift = -1; // EP sits an octave below pad root to avoid clashing with lead
-            chordIntervalsForEP.forEach(interval => {
+            // Select notes for EP from currentScaleNotes, trying to match chord tones
+            const epOctaveShift = -1; // EP sits an octave below pad root
+            const targetChordRootMidi = 69 + 12 * Math.log2(this.currentChord!.rootFreq / 440) + (epOctaveShift * 12);
+
+            // Get MIDI notes of the current chord in the target EP octave
+            const chordToneMidiNotesInTargetOctave = this.currentChord!.intervals.map(interval => 
+                Math.round(targetChordRootMidi + interval)
+            );
+
+            // Filter these chord tones to only include those present in the current scale
+            const epScaleNotesForChord = chordToneMidiNotesInTargetOctave.filter(midiNote => 
+                this.currentScaleNotes.includes(midiNote)
+            );
+
+            // If no direct chord tones are in scale for EP, pick a few suitable scale notes as fallback
+            let notesToPlay = epScaleNotesForChord;
+            if (notesToPlay.length === 0) {
+                notesToPlay = this.currentScaleNotes.filter(noteMidi => noteMidi >= 48 && noteMidi <= 72).slice(0, 2 + Math.floor(rng() * 2)); // C3-C5, 2-3 notes
+            }
+            
+            // Take a subset if too many notes (e.g. max 3-4 for EP voicing)
+            if (notesToPlay.length > (rng() < 0.6 ? 3 : 4)) {
+                notesToPlay = notesToPlay.sort(() => 0.5 - rng()).slice(0, rng() < 0.6 ? 3 : 4);
+            }
+
+            notesToPlay.forEach(noteMidi => {
+                const freq = 440 * Math.pow(2, (noteMidi - 69) / 12);
                 this.currentElectricPianoNotes.push({
-                    frequency: this.currentChord!.rootFreq * semitoneToRatio(interval + epOctaveShift * 12),
+                    frequency: freq,
                     duration: 0.7 + rng() * 0.3, // Short, slightly varied length
                     velocity: 0.11 + rng() * 0.05,
                     type: 'sine',
@@ -756,36 +889,40 @@ class AudioEngine {
     if (rng() < 0.8) { // Most bars have flute lines
         const fluteNoteCount = 1 + Math.floor(rng() * 3); // 1–3 notes
         for (let i = 0; i < fluteNoteCount; i++) {
-            const targetBeat = Math.floor(rng() * 4); // Quarter-beat placement
-            const scaleDegree = this.scale[Math.floor(rng() * this.scale.length)];
-            const freq = this.keyRootFreq * semitoneToRatio(scaleDegree + 12); // One octave above key
+            const availableFluteNotes = this.currentScaleNotes.filter(n => n >= 60 && n <= 84); // C4 to C6 for flute
+            if (availableFluteNotes.length === 0) continue;
+            const noteMidi = availableFluteNotes[Math.floor(rng() * availableFluteNotes.length)];
+            const freq = 440 * Math.pow(2, (noteMidi - 69) / 12); // Convert MIDI to Freq
             this.currentFluteNotes.push({
                 frequency: freq,
                 duration: 0.6 + rng() * 0.4,
                 velocity: 0.09 + rng() * 0.05,
                 type: 'sine',
                 instrument: 'flute',
-                targetBeatInBar: targetBeat,
+                targetBeatInBar: Math.floor(rng() * 4)
             });
         }
     }
 
-    // --- Atmosphere/Drone ---
-    // Play a low root or fifth of the current chord, very long
+    // --- Atmosphere/Drone (uses currentScaleNotes) ---
     if (this.barCount % (2 + Math.floor(rng()*3)) === 0 || !this.currentAtmosphereNote) { // Change drone every 2-4 bars
-        const droneInterval = rng() < 0.6 ? this.currentChord.intervals[0] : (this.currentChord.intervals.includes(7) ? 7 : this.currentChord.intervals[0]); // Root or 5th
-        const droneFreq = this.currentChord.rootFreq * semitoneToRatio(droneInterval -12); // One octave below chord root
-        this.currentAtmosphereNote = {
-            frequency: droneFreq,
-            duration: (3.5 + rng() * 4) * 4, // Held for many bars (duration in beats until release)
-            velocity: 0.03 + rng() * 0.02, // Very subtle
-            type: 'triangle',
-            attack: 5.0 + rng() * 3.0, // Very slow attack
-            decay: 2.0, sustain: 0.8, release: 6.0 + rng() * 4.0, // Very slow release
-            instrument: 'atmosphere',
-        };
+        const availableDroneNotes = this.currentScaleNotes.filter(noteMidi => noteMidi >= 24 && noteMidi <= 48); // C1 to C3 for drone
+        if (availableDroneNotes.length > 0) {
+            const noteMidi = availableDroneNotes[Math.floor(rng() * availableDroneNotes.length)];
+            const droneFreq = 440 * Math.pow(2, (noteMidi - 69) / 12); // Convert MIDI to Freq
+            this.currentAtmosphereNote = {
+                frequency: droneFreq,
+                duration: (3.5 + rng() * 4) * 4, // Held for many bars (duration in beats until release)
+                velocity: 0.03 + rng() * 0.02, // Very subtle
+                type: 'triangle',
+                attack: 5.0 + rng() * 3.0, // Very slow attack
+                decay: 2.0, sustain: 0.8, release: 6.0 + rng() * 4.0, // Very slow release
+                instrument: 'atmosphere',
+            };
+        } else {
+            this.currentAtmosphereNote = null; // No suitable drone note in scale
+        }
     }
-
 
     // --- Drums (16-step pattern) ---
     // (Drum pattern generation logic remains largely the same)
@@ -845,7 +982,7 @@ class AudioEngine {
     
     // Schedule Arp Notes
     this.currentArpNotes.forEach(note => {
-        if (note.arpIndex === current16th) { // Arp notes are scheduled by their direct 16th step index
+        if (note.target16thStep === current16th) {
             this.scheduleNote(note, time);
         }
     });
