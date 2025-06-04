@@ -734,9 +734,22 @@ class AudioEngine {
         absoluteSemitones: chordVoicingIntervals.map(i => semitoneInKeyForChordRoot + i)
     };
 
+    // --- Define currentChordMidiNotes ---
+    // This should be placed after this.currentChord is set:
+    const currentChordAbsoluteFrequencies = this.currentChord.absoluteSemitones.map(semi =>
+        this.keyRootFreq * semitoneToRatio(semi)
+    );
+    const currentChordMidiNotes = currentChordAbsoluteFrequencies.map(freq =>
+        Math.round(69 + 12 * Math.log2(freq / 440))
+    ).filter(noteMidi =>
+        this.currentScaleNotes.includes(noteMidi) // Ensure it's in the overall scale
+    );
+    // Now currentChordMidiNotes contains actual MIDI note numbers that are part of the current chord AND current scale.
+    const chordRootMidi = Math.round(69 + 12 * Math.log2(this.currentChord!.rootFreq / 440));
+
     const baseOctavePad = rng() < 0.5 ? -1 : 0; // -1 for one octave down, 0 for root octave of key
-    const baseOctaveLead = 1; // Lead one octave above key root
-    const baseOctaveArp = rng() < 0.5 ? 0 : 1;
+    // const baseOctaveLead = 1; // Lead one octave above key root - This variable is not used anymore.
+    // const baseOctaveArp = rng() < 0.5 ? 0 : 1; // This variable is not used anymore.
 
     // --- Pad ---
     let padTargetFrequencies = this.currentChord.intervals.map(interval =>
@@ -756,10 +769,34 @@ class AudioEngine {
     this.prevPadFrequencies = [...ledPadFrequencies];
 
     // --- Bass ---
-    const bassRootFreq = this.currentChord.rootFreq * (rng() < 0.7 ? 0.5 : 0.25); // 1 or 2 octaves below chord root
+    let bassTargetFreq;
+    const playFifthChance = 0.2; // 20% chance to play the fifth
+
+    if (rng() < playFifthChance && this.currentChord) {
+        // Try to play the fifth. Find the fifth interval in the current chord's voicing.
+        let fifthInterval = this.currentChord.intervals.find(i => i === 7); // Perfect fifth is 7 semitones
+
+        if (fifthInterval !== undefined) {
+            bassTargetFreq = this.currentChord.rootFreq * semitoneToRatio(fifthInterval);
+        } else {
+            // If no explicit fifth in voicing, default to root for this instance.
+            bassTargetFreq = this.currentChord.rootFreq;
+        }
+    } else if (this.currentChord) {
+        // Play the root
+        bassTargetFreq = this.currentChord.rootFreq;
+    } else {
+        // Fallback if currentChord is somehow null (should not happen in normal flow)
+        bassTargetFreq = this.keyRootFreq * 0.5; // Default to a low key root
+    }
+
+    // Apply octave adjustment for bass register
+    const octaveMultiplier = rng() < 0.7 ? 0.5 : 0.25; // 1 or 2 octaves down
+    const finalBassFreq = bassTargetFreq * octaveMultiplier;
+
     this.currentBassNote = {
-      frequency: bassRootFreq,
-      duration: rng() < 0.3 ? 1.9 : 3.9, // Usually long, sometimes half bar for rhythm
+      frequency: finalBassFreq,
+      duration: rng() < 0.3 ? 1.9 : 3.9,
       velocity: 0.20 + rng() * 0.08,
       type: rng() < 0.6 ? 'sine' : 'triangle',
       attack: 0.04, decay: 0.3, sustain: 0.8, release: 0.5 + rng() * 0.3,
@@ -768,30 +805,54 @@ class AudioEngine {
 
     // --- Lead Melody (uses currentScaleNotes) ---
     this.currentLeadMelodyNotes = [];
-    const numMelodyNotes = 1 + Math.floor(rng() * 3); // 1-3 notes in the bar
-    // Filter scale notes for a typical lead range (e.g., C4 to C6, MIDI 60-84)
-    const availableLeadNotes = this.currentScaleNotes.filter(noteMidi => noteMidi >= 60 && noteMidi <= 84);
+    const numMelodyNotes = 1 + Math.floor(rng() * 3); // 1-3 notes
+    const leadNoteRangeMidi = this.currentScaleNotes.filter(noteMidi => noteMidi >= 60 && noteMidi <= 84); // C4 to C6
+    let pickedLeadNotesMidiThisBar: number[] = [];
 
-    if (availableLeadNotes.length > 0) {
+    if (leadNoteRangeMidi.length > 0) {
+        const availableChordTonesForLead = currentChordMidiNotes.filter(m => leadNoteRangeMidi.includes(m));
+        const sortedAvailableChordTones = [...availableChordTonesForLead].sort((a,b)=>a-b);
+        const harmoniousScaleNotesForLeadBase = leadNoteRangeMidi.filter(scaleNoteMidi => {
+            const intervalFromRoot = Math.abs(scaleNoteMidi - chordRootMidi) % 12;
+            return intervalFromRoot !== 6 && intervalFromRoot !== 1;
+        });
+        const sortedHarmoniousScaleNotes = [...harmoniousScaleNotesForLeadBase].sort((a,b)=>a-b);
+
         for (let i = 0; i < numMelodyNotes; i++) {
-            const noteMidi = availableLeadNotes[Math.floor(rng() * availableLeadNotes.length)];
-            // Convert MIDI note to frequency. A4 (MIDI 69) is 440Hz.
-            const noteFreq = 440 * Math.pow(2, (noteMidi - 69) / 12);
-            
-            this.currentLeadMelodyNotes.push({
-                frequency: noteFreq,
-                duration: (rng() < 0.4 ? 1.3 : 0.6) + rng() * 0.4, // Note length in beats (total incl. release)
-                velocity: 0.12 + rng() * 0.06,
-                type: rng() < 0.5 ? 'sine' : 'triangle',
-                attack: 0.05 + rng()*0.1, decay: 0.15, sustain: 0.6, release: 0.4 + rng()*0.3,
-                instrument: 'lead',
-                targetBeatInBar: Math.floor(rng() * 4) // Play on a random quarter beat (0,1,2,3)
-            });
+            let noteMidi;
+            const unpickedChordTones = sortedAvailableChordTones.filter(ct => !pickedLeadNotesMidiThisBar.includes(ct));
+            const unpickedHarmoniousScaleNotes = sortedHarmoniousScaleNotes.filter(sn => !pickedLeadNotesMidiThisBar.includes(sn));
+
+            if (unpickedChordTones.length > 0 && (rng() < (i === 0 ? 0.75 : 0.60))) { // Higher chance for chord tone
+                noteMidi = unpickedChordTones[0];
+            } else if (unpickedHarmoniousScaleNotes.length > 0) {
+                noteMidi = unpickedHarmoniousScaleNotes[0];
+            } else if (unpickedChordTones.length > 0) {
+                noteMidi = unpickedChordTones[0];
+            } else if (leadNoteRangeMidi.length > 0) {
+                const fallbackOptions = leadNoteRangeMidi.filter(n => !pickedLeadNotesMidiThisBar.includes(n));
+                noteMidi = fallbackOptions.length > 0 ? fallbackOptions[0] : leadNoteRangeMidi[0];
+            } else {
+                continue;
+            }
+
+            if (noteMidi !== undefined) {
+                pickedLeadNotesMidiThisBar.push(noteMidi);
+                const noteFreq = 440 * Math.pow(2, (noteMidi - 69) / 12);
+                this.currentLeadMelodyNotes.push({
+                    frequency: noteFreq,
+                    duration: (rng() < 0.4 ? 1.3 : 0.6) + rng() * 0.4,
+                    velocity: 0.12 + rng() * 0.06,
+                    type: rng() < 0.5 ? 'sine' : 'triangle',
+                    attack: 0.05 + rng()*0.1, decay: 0.15, sustain: 0.6, release: 0.4 + rng()*0.3,
+                    instrument: 'lead',
+                    targetBeatInBar: Math.floor(rng() * 4)
+                });
+            }
         }
-        // Ensure unique target beats for melody notes if multiple
         const uniqueBeats = new Set<number>();
         this.currentLeadMelodyNotes = this.currentLeadMelodyNotes.filter(note => {
-            if (note.targetBeatInBar === undefined) return false; // Should not happen with current logic
+            if (note.targetBeatInBar === undefined) return false;
             if (uniqueBeats.has(note.targetBeatInBar)) return false;
             uniqueBeats.add(note.targetBeatInBar);
             return true;
@@ -800,35 +861,72 @@ class AudioEngine {
 
     // --- Arpeggiator ---
     this.currentArpNotes = [];
-    const arpChordTones = this.currentChord.intervals; // Use the base voicing intervals
-    if (arpChordTones.length > 0) {
-        const arpPatternLength = rng() < 0.5 ? 4 : 8; // 4 or 8 arp notes per bar
-        const chordNotesInScale = this.currentChord.absoluteSemitones.map(semi => this.keyRootFreq * semitoneToRatio(semi)).filter(cn => this.currentScaleNotes.includes(Math.round(cn)));
-        let noteSource = chordNotesInScale.length > 0 ? chordNotesInScale : this.currentScaleNotes.filter(n => n >= 55 && n <= 84); // MIDI C3-A#5 range for arp
-        if (noteSource.length === 0) noteSource = this.currentScaleNotes.filter(n => n >= 48 && n <= 72); // Fallback to C3-C5 if primary range empty
-        // If still no notes, arp will be silent for this bar.
-        if (noteSource.length > 0) { // Only proceed if we have notes for the arp
+    const arpPatternTypes = ['asc', 'desc', 'upDown', 'downUp', 'randomChordToneOrder'];
+    const selectedArpPattern = arpPatternTypes[Math.floor(rng() * arpPatternTypes.length)];
 
-        const arpBase = noteSource[Math.floor(rng() * noteSource.length)];
-        const octaveJump = (rng() > 0.7 ? 12 : 0);
-        const octaveDirection = (rng() > 0.5 ? 1 : (rng() > 0.3 ? -1 : 0));
-        const octaveOffset = octaveJump * octaveDirection;
-        let note = arpBase + octaveOffset;
-        note = Math.min(84, Math.max(48, note)); // Constrain C3-C6
-        
-        for (let i = 0; i < arpPatternLength; i++) {
-            this.currentArpNotes.push({
-                frequency: note,
-                duration: 0.4, // 16th note length (total incl. release)
-                velocity: 0.08 + rng() * 0.04,
-                type: 'sine',
-                attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.15,
-                instrument: 'arp',
-                target16thStep: Math.floor(i * (16 / arpPatternLength))
-            });
-        } // Closes for loop
-      } // Closes: if (noteSource.length > 0)
-    } // Closes: if (arpChordTones.length > 0)
+    const arpBaseOctaveMidi = rng() < 0.5 ? 0 : 1;
+    const arpCandidateMidiNotes = this.currentChord.absoluteSemitones.map(semi => {
+        const baseFreq = this.keyRootFreq * semitoneToRatio(semi);
+        let midiNote = Math.round(69 + 12 * Math.log2(baseFreq / 440));
+        midiNote += (arpBaseOctaveMidi * 12);
+        while (midiNote < 48 && midiNote + 12 <= 84) midiNote += 12;
+        while (midiNote > 84 && midiNote - 12 >= 48) midiNote -= 12;
+        return midiNote;
+    }).filter(noteMidi => noteMidi >= 48 && noteMidi <= 84 && this.currentScaleNotes.includes(noteMidi));
+
+    if (arpCandidateMidiNotes.length > 0) {
+        const arpPatternLength = rng() < 0.3 ? 4 : (rng() < 0.7 ? 8 : 16);
+        const uniqueArpNotes = Array.from(new Set(arpCandidateMidiNotes)).sort((a,b) => a-b);
+        let finalArpNotesSequence: number[] = [];
+
+        switch (selectedArpPattern) {
+            case 'asc':
+                finalArpNotesSequence = [...uniqueArpNotes];
+                break;
+            case 'desc':
+                finalArpNotesSequence = [...uniqueArpNotes].sort((a,b) => b-a);
+                break;
+            case 'upDown':
+                finalArpNotesSequence = [...uniqueArpNotes];
+                if (uniqueArpNotes.length > 2) {
+                    for (let k = uniqueArpNotes.length - 2; k > 0; k--) {
+                        finalArpNotesSequence.push(uniqueArpNotes[k]);
+                    }
+                }
+                break;
+            case 'downUp':
+                const descendingNotes = [...uniqueArpNotes].sort((a,b) => b-a);
+                finalArpNotesSequence = [...descendingNotes];
+                if (descendingNotes.length > 2) {
+                    for (let k = descendingNotes.length - 2; k > 0; k--) {
+                        finalArpNotesSequence.push(descendingNotes[k]);
+                    }
+                }
+                break;
+            case 'randomChordToneOrder':
+                finalArpNotesSequence = [...uniqueArpNotes].sort(() => 0.5 - rng());
+                break;
+            default:
+                finalArpNotesSequence = [...uniqueArpNotes];
+        }
+
+        if (finalArpNotesSequence.length > 0) {
+            for (let i = 0; i < arpPatternLength; i++) {
+                const noteMidi = finalArpNotesSequence[i % finalArpNotesSequence.length];
+                const freq = 440 * Math.pow(2, (noteMidi - 69) / 12);
+
+                this.currentArpNotes.push({
+                    frequency: freq,
+                    duration: 4 / arpPatternLength,
+                    velocity: 0.08 + rng() * 0.04,
+                    type: 'sine',
+                    attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.15,
+                    instrument: 'arp',
+                    target16thStep: Math.floor(i * (16 / arpPatternLength))
+                });
+            }
+        }
+    }
 
     // --- Electric Piano ---
     this.currentElectricPianoNotes = [];
@@ -851,22 +949,36 @@ class AudioEngine {
             );
 
             // Filter these chord tones to only include those present in the current scale
-            const epScaleNotesForChord = chordToneMidiNotesInTargetOctave.filter(midiNote => 
-                this.currentScaleNotes.includes(midiNote)
+            // This is effectively currentChordMidiNotes filtered for the EP's octave and range.
+            let notesToPlayForEP = chordToneMidiNotesInTargetOctave.filter(midiNote =>
+                this.currentScaleNotes.includes(midiNote) && midiNote >= 48 && midiNote <= 72 // C3-C5 range
             );
 
-            // If no direct chord tones are in scale for EP, pick a few suitable scale notes as fallback
-            let notesToPlay = epScaleNotesForChord;
-            if (notesToPlay.length === 0) {
-                notesToPlay = this.currentScaleNotes.filter(noteMidi => noteMidi >= 48 && noteMidi <= 72).slice(0, 2 + Math.floor(rng() * 2)); // C3-C5, 2-3 notes
+            if (notesToPlayForEP.length === 0) {
+                // Fallback: if no chord tones in scale/range, pick a few suitable harmonious scale notes
+                const baseFallbackRange = this.currentScaleNotes.filter(noteMidi => noteMidi >= 48 && noteMidi <= 72); // C3-C5
+
+                const harmoniousFallbackForEP = baseFallbackRange.filter(scaleNoteMidi => {
+                    const intervalFromRoot = Math.abs(scaleNoteMidi - chordRootMidi) % 12;
+                    // For EP comping, being a bit more careful with dissonances against root might be good.
+                    // Explicitly avoiding tritones (6) and minor seconds (1). Major 7ths (11) might also be too spicy for generic fallback.
+                    return ![1, 6, 11].includes(intervalFromRoot);
+                });
+
+                if (harmoniousFallbackForEP.length > 0) {
+                    notesToPlayForEP = harmoniousFallbackForEP.sort(() => 0.5 - rng()).slice(0, 2 + Math.floor(rng() * 2));
+                } else if (baseFallbackRange.length > 0) { // If harmony filter too strict, use original fallback
+                     notesToPlayForEP = baseFallbackRange.sort(() => 0.5 - rng()).slice(0, 2 + Math.floor(rng() * 2));
+                }
+                // If baseFallbackRange is also empty, notesToPlayForEP remains empty.
             }
             
-            // Take a subset if too many notes (e.g. max 3-4 for EP voicing)
-            if (notesToPlay.length > (rng() < 0.6 ? 3 : 4)) {
-                notesToPlay = notesToPlay.sort(() => 0.5 - rng()).slice(0, rng() < 0.6 ? 3 : 4);
+            // Take a subset if too many notes
+            if (notesToPlayForEP.length > (rng() < 0.6 ? 3 : 4)) {
+                notesToPlayForEP = notesToPlayForEP.sort(() => 0.5 - rng()).slice(0, rng() < 0.6 ? 3 : 4);
             }
 
-            notesToPlay.forEach(noteMidi => {
+            notesToPlayForEP.forEach(noteMidi => {
                 const freq = 440 * Math.pow(2, (noteMidi - 69) / 12);
                 this.currentElectricPianoNotes.push({
                     frequency: freq,
@@ -886,41 +998,138 @@ class AudioEngine {
 
     // --- Flute ---
     this.currentFluteNotes = [];
-    if (rng() < 0.8) { // Most bars have flute lines
-        const fluteNoteCount = 1 + Math.floor(rng() * 3); // 1–3 notes
-        for (let i = 0; i < fluteNoteCount; i++) {
-            const availableFluteNotes = this.currentScaleNotes.filter(n => n >= 60 && n <= 84); // C4 to C6 for flute
-            if (availableFluteNotes.length === 0) continue;
-            const noteMidi = availableFluteNotes[Math.floor(rng() * availableFluteNotes.length)];
-            const freq = 440 * Math.pow(2, (noteMidi - 69) / 12); // Convert MIDI to Freq
-            this.currentFluteNotes.push({
-                frequency: freq,
-                duration: 0.6 + rng() * 0.4,
-                velocity: 0.09 + rng() * 0.05,
-                type: 'sine',
-                instrument: 'flute',
-                targetBeatInBar: Math.floor(rng() * 4)
+    if (rng() < 0.8) {
+        const fluteNoteCount = 1 + Math.floor(rng() * 3);
+        const fluteNoteRangeMidi = this.currentScaleNotes.filter(n => n >= 60 && n <= 84); // C4 to C6
+        let pickedFluteNotesMidiThisBar: number[] = [];
+
+        if (fluteNoteRangeMidi.length > 0) {
+            const availableChordTonesForFlute = currentChordMidiNotes.filter(m => fluteNoteRangeMidi.includes(m));
+            const sortedAvailableChordTonesFlute = [...availableChordTonesForFlute].sort((a,b)=>a-b);
+            const harmoniousScaleNotesForFluteBase = fluteNoteRangeMidi.filter(scaleNoteMidi => {
+                const intervalFromRoot = Math.abs(scaleNoteMidi - chordRootMidi) % 12;
+                return intervalFromRoot !== 6 && intervalFromRoot !== 1;
+            });
+            const sortedHarmoniousScaleNotesFlute = [...harmoniousScaleNotesForFluteBase].sort((a,b)=>a-b);
+
+            for (let i = 0; i < fluteNoteCount; i++) {
+                let noteMidi;
+                const unpickedChordTones = sortedAvailableChordTonesFlute.filter(ct => !pickedFluteNotesMidiThisBar.includes(ct));
+                const unpickedHarmoniousScaleNotes = sortedHarmoniousScaleNotesFlute.filter(sn => !pickedFluteNotesMidiThisBar.includes(sn));
+
+                if (unpickedChordTones.length > 0 && (rng() < (i === 0 ? 0.70 : 0.50))) { // Higher chance for chord tone
+                    noteMidi = unpickedChordTones[0];
+                } else if (unpickedHarmoniousScaleNotes.length > 0) {
+                    noteMidi = unpickedHarmoniousScaleNotes[0];
+                } else if (unpickedChordTones.length > 0) {
+                    noteMidi = unpickedChordTones[0];
+                } else if (fluteNoteRangeMidi.length > 0) {
+                     const fallbackOptions = fluteNoteRangeMidi.filter(n => !pickedFluteNotesMidiThisBar.includes(n));
+                     noteMidi = fallbackOptions.length > 0 ? fallbackOptions[0] : fluteNoteRangeMidi[0];
+                } else {
+                    continue;
+                }
+
+                if (noteMidi !== undefined) {
+                    pickedFluteNotesMidiThisBar.push(noteMidi);
+                    const freq = 440 * Math.pow(2, (noteMidi - 69) / 12);
+                    this.currentFluteNotes.push({
+                        frequency: freq,
+                        duration: 0.6 + rng() * 0.4,
+                        velocity: 0.09 + rng() * 0.05,
+                        type: 'sine',
+                        instrument: 'flute',
+                        targetBeatInBar: Math.floor(rng() * 4)
+                    });
+                }
+            }
+            const uniqueBeats = new Set<number>();
+            this.currentFluteNotes = this.currentFluteNotes.filter(note => {
+                if (note.targetBeatInBar === undefined) return true; // Keep if undefined, or handle as error
+                if (uniqueBeats.has(note.targetBeatInBar)) return false;
+                uniqueBeats.add(note.targetBeatInBar);
+                return true;
             });
         }
     }
 
     // --- Atmosphere/Drone (uses currentScaleNotes) ---
     if (this.barCount % (2 + Math.floor(rng()*3)) === 0 || !this.currentAtmosphereNote) { // Change drone every 2-4 bars
-        const availableDroneNotes = this.currentScaleNotes.filter(noteMidi => noteMidi >= 24 && noteMidi <= 48); // C1 to C3 for drone
-        if (availableDroneNotes.length > 0) {
-            const noteMidi = availableDroneNotes[Math.floor(rng() * availableDroneNotes.length)];
-            const droneFreq = 440 * Math.pow(2, (noteMidi - 69) / 12); // Convert MIDI to Freq
+        // Define desired drone MIDI range
+        const droneMinMidi = 24; // C1
+        const droneMaxMidi = 48; // C3
+
+        // Get current chord's root, third, and fifth MIDI notes
+        const chordRootActualMidi = Math.round(69 + 12 * Math.log2(this.currentChord!.rootFreq / 440));
+
+        // Find the third and fifth intervals from the chord's voicing definition
+        let chordThirdInterval = this.currentChord!.intervals.find(i => i === 3 || i === 4);
+        let chordFifthInterval = this.currentChord!.intervals.find(i => i === 7);
+
+        let potentialDroneMidiNotes: number[] = [];
+
+        // Priority 1: Chord Root
+        let droneRootMidi = chordRootActualMidi;
+        while (droneRootMidi > droneMaxMidi && droneRootMidi - 12 >= droneMinMidi) droneRootMidi -= 12;
+        while (droneRootMidi < droneMinMidi && droneRootMidi + 12 <= droneMaxMidi) droneRootMidi += 12;
+        if (droneRootMidi >= droneMinMidi && droneRootMidi <= droneMaxMidi && this.currentScaleNotes.includes(droneRootMidi)) {
+            potentialDroneMidiNotes.push(droneRootMidi);
+        }
+
+        // Priority 2: Chord Fifth (if defined in voicing)
+        if (chordFifthInterval !== undefined) {
+            let droneFifthMidi = chordRootActualMidi + chordFifthInterval;
+            while (droneFifthMidi > droneMaxMidi && droneFifthMidi - 12 >= droneMinMidi) droneFifthMidi -= 12;
+            while (droneFifthMidi < droneMinMidi && droneFifthMidi + 12 <= droneMaxMidi) droneFifthMidi += 12;
+            if (droneFifthMidi >= droneMinMidi && droneFifthMidi <= droneMaxMidi && this.currentScaleNotes.includes(droneFifthMidi) && !potentialDroneMidiNotes.includes(droneFifthMidi)) {
+                potentialDroneMidiNotes.push(droneFifthMidi);
+            }
+        }
+
+        // Priority 3: Chord Third (if defined in voicing)
+        if (chordThirdInterval !== undefined) {
+            let droneThirdMidi = chordRootActualMidi + chordThirdInterval;
+            while (droneThirdMidi > droneMaxMidi && droneThirdMidi - 12 >= droneMinMidi) droneThirdMidi -= 12;
+            while (droneThirdMidi < droneMinMidi && droneThirdMidi + 12 <= droneMaxMidi) droneThirdMidi += 12;
+            if (droneThirdMidi >= droneMinMidi && droneThirdMidi <= droneMaxMidi && this.currentScaleNotes.includes(droneThirdMidi) && !potentialDroneMidiNotes.includes(droneThirdMidi)) {
+                potentialDroneMidiNotes.push(droneThirdMidi);
+            }
+        }
+
+        // Priority 4: Key Root
+        const keyRootMidi = Math.round(69 + 12 * Math.log2(this.keyRootFreq / 440));
+        let droneKeyRootMidi = keyRootMidi;
+        while (droneKeyRootMidi > droneMaxMidi && droneKeyRootMidi - 12 >= droneMinMidi) droneKeyRootMidi -= 12;
+        while (droneKeyRootMidi < droneMinMidi && droneKeyRootMidi + 12 <= droneMaxMidi) droneKeyRootMidi += 12;
+        if (droneKeyRootMidi >= droneMinMidi && droneKeyRootMidi <= droneMaxMidi && this.currentScaleNotes.includes(droneKeyRootMidi) && !potentialDroneMidiNotes.includes(droneKeyRootMidi)) {
+            potentialDroneMidiNotes.push(droneKeyRootMidi);
+        }
+
+        let selectedDroneMidi: number | null = null;
+
+        if (potentialDroneMidiNotes.length > 0) {
+            selectedDroneMidi = potentialDroneMidiNotes[0];
+        } else {
+            // Priority 5 (Fallback): Original logic - random from available low scale notes
+            const availableDroneNotes = this.currentScaleNotes.filter(noteMidi => noteMidi >= droneMinMidi && noteMidi <= droneMaxMidi);
+            if (availableDroneNotes.length > 0) {
+                selectedDroneMidi = availableDroneNotes[Math.floor(rng() * availableDroneNotes.length)];
+            }
+        }
+
+        if (selectedDroneMidi !== null) {
+            const droneFreq = 440 * Math.pow(2, (selectedDroneMidi - 69) / 12);
             this.currentAtmosphereNote = {
                 frequency: droneFreq,
-                duration: (3.5 + rng() * 4) * 4, // Held for many bars (duration in beats until release)
-                velocity: 0.03 + rng() * 0.02, // Very subtle
+                duration: (3.5 + rng() * 4) * 4,
+                velocity: 0.03 + rng() * 0.02,
                 type: 'triangle',
-                attack: 5.0 + rng() * 3.0, // Very slow attack
-                decay: 2.0, sustain: 0.8, release: 6.0 + rng() * 4.0, // Very slow release
+                attack: 5.0 + rng() * 3.0,
+                decay: 2.0, sustain: 0.8, release: 6.0 + rng() * 4.0,
                 instrument: 'atmosphere',
             };
         } else {
-            this.currentAtmosphereNote = null; // No suitable drone note in scale
+            this.currentAtmosphereNote = null; // No suitable drone note found
         }
     }
 
