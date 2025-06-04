@@ -34,6 +34,8 @@ interface DrumPattern {
 class AudioEngine {
   private audioContext: AudioContext;
   private mainGainNode: GainNode;
+  private readonly VOLUME_STORAGE_KEY = 'audioEngine_volume';
+  private currentVolume: number = 0.3; // Default, will be overridden by saved value
 
   public isPlaying: boolean = false;
   private currentSeed: number = 0;
@@ -124,7 +126,11 @@ class AudioEngine {
   constructor() {
     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
     this.mainGainNode = this.audioContext.createGain();
-    this.mainGainNode.gain.value = 0.35; // Default volume
+    
+    // Load saved volume or use default
+    const savedVolume = localStorage.getItem(this.VOLUME_STORAGE_KEY);
+    this.currentVolume = savedVolume ? parseFloat(savedVolume) : 0.35;
+    this.mainGainNode.gain.value = this.currentVolume;
     // this.mainGainNode.connect(this.audioContext.destination); // Will be connected via effects chain
 
     // Master Lowpass Filter
@@ -220,14 +226,14 @@ class AudioEngine {
   }
 
   public setVolume(volume: number): void {
-    const newVolume = Math.max(0, Math.min(1, volume));
-    this.mainGainNode.gain.setValueAtTime(newVolume, this.audioContext.currentTime);
-    // Could store this.currentVolume if needed for other purposes
-    console.log(`Volume set to: ${newVolume}`);
+    this.currentVolume = Math.max(0, Math.min(1, volume));
+    this.mainGainNode.gain.setValueAtTime(this.currentVolume, this.audioContext.currentTime);
+    localStorage.setItem(this.VOLUME_STORAGE_KEY, this.currentVolume.toString());
+    console.log(`Volume set to: ${this.currentVolume}`);
   }
   
   public getVolume(): number {
-      return this.mainGainNode.gain.value;
+    return this.currentVolume;
   }
 
   public getIsPlaying(): boolean {
@@ -372,7 +378,7 @@ class AudioEngine {
     }
   }
 
-  private generateNewPatterns(): void {
+  public generateNewPatterns(): void {
     const rng = this.seededRandom(); 
     
     // BPM randomization
@@ -941,12 +947,33 @@ class AudioEngine {
   
   public async start(): Promise<void> {
     if (this.isPlaying) {
-       console.log("AudioEngine already playing.");
-       return;
+      console.log("AudioEngine already playing.");
+      return;
     }
     if (this.audioContext.state === 'suspended') {
       await this.audioContext.resume();
       console.log("AudioContext resumed.");
+    }
+
+    // Rebuild the audio graph with the correct volume
+    this.mainGainNode.disconnect();
+    this.mainGainNode = this.audioContext.createGain();
+    this.mainGainNode.gain.value = this.currentVolume;
+    
+    // Rebuild the complete audio graph
+    this.mainGainNode.connect(this.lowpassFilter);
+    this.lowpassFilter.connect(this.dryGain);
+    this.dryGain.connect(this.audioContext.destination);
+    this.lowpassFilter.connect(this.delayNode);
+    this.delayNode.connect(this.delayFilterNode);
+    this.delayFilterNode.connect(this.feedbackNode);
+    this.feedbackNode.connect(this.delayNode);
+    this.delayFilterNode.connect(this.wetGain);
+    this.wetGain.connect(this.audioContext.destination);
+    
+    if (this.reverbNode) {
+      this.lowpassFilter.connect(this.reverbNode);
+      this.reverbNode.connect(this.wetGain);
     }
 
     this.isPlaying = true;
@@ -959,25 +986,35 @@ class AudioEngine {
     if (this.intervalId !== null) window.clearInterval(this.intervalId);
     this.intervalId = window.setInterval(() => this.scheduler(), this.scheduleInterval * 1000);
     
-    console.log("AudioEngine started. BPM:", this.bpm);
+    console.log("AudioEngine started. BPM:", this.bpm, "Volume:", this.currentVolume);
   }
 
   public stop(): void {
     if (!this.isPlaying) {
-       // console.log("AudioEngine already stopped.");
-       return;
+      return;
     }
     this.isPlaying = false;
     if (this.intervalId !== null) {
       window.clearInterval(this.intervalId);
       this.intervalId = null;
-      // console.log("Scheduler interval cleared.");
     }
-
-    this.mainGainNode.gain.cancelScheduledValues(this.audioContext.currentTime);
-    // Fade out quickly to prevent clicks
-    this.mainGainNode.gain.setValueAtTime(this.mainGainNode.gain.value, this.audioContext.currentTime); // Hold current value
-    this.mainGainNode.gain.linearRampToValueAtTime(0, this.audioContext.currentTime + 0.05); 
+    
+    // Immediately silence all audio by disconnecting the main gain node
+    // but first store the current volume to restore later
+    const currentVolume = this.mainGainNode.gain.value;
+    this.mainGainNode.disconnect();
+    
+    // Reconnect the gain node with volume set to 0
+    this.mainGainNode = this.audioContext.createGain();
+    this.mainGainNode.gain.value = 0;
+    
+    // Rebuild the audio graph structure without connecting to destination
+    this.mainGainNode.connect(this.lowpassFilter);
+    this.lowpassFilter.connect(this.dryGain);
+    this.lowpassFilter.connect(this.delayNode);
+    
+    // Store the current volume to be restored on play
+    this.currentVolume = currentVolume;
     
     console.log("AudioEngine stopped.");
   }
